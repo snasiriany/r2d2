@@ -1,4 +1,4 @@
-source ~/anaconda3/etc/profile.d/conda.sh
+source /home/alice/miniconda3/etc/profile.d/conda.sh
 conda activate polymetis-local
 pkill -9 gripper
 chmod a+rw /dev/ttyUSB0
