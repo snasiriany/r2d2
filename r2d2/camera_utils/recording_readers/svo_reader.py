@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 import cv2
+import numpy as np
 
 try:
     import pyzed.sl as sl
@@ -68,6 +69,20 @@ class SVOReader:
         height = camera_info.resolution.height
         return (width, height)
 
+    def get_camera_intrinsics(self):
+        calib_params = self._cam.get_camera_information().camera_configuration.calibration_parameters
+        return {
+            self.serial_number + "_left": self._process_intrinsics(calib_params.left_cam),
+            self.serial_number + "_right": self._process_intrinsics(calib_params.right_cam),
+        }
+
+    ### Calibration Utilities ###
+    def _process_intrinsics(self, params):
+        intrinsics = {}
+        intrinsics["cameraMatrix"] = np.array([[params.fx, 0, params.cx], [0, params.fy, params.cy], [0, 0, 1]])
+        intrinsics["distCoeffs"] = np.array(list(params.disto))
+        return intrinsics
+
     def get_frame_count(self):
         if self.skip_reading:
             return 0
@@ -125,12 +140,12 @@ class SVOReader:
                     self.serial_number + "_left": self._process_frame(self._left_img),
                     self.serial_number + "_right": self._process_frame(self._right_img),
                 }
-        # if self.depth:
-        # 	self._cam.retrieve_measure(self._left_depth, sl.MEASURE.DEPTH, resolution=self.resolution)
-        # 	self._cam.retrieve_measure(self._right_depth, sl.MEASURE.DEPTH_RIGHT, resolution=self.resolution)
-        # 	data_dict['depth'] = {
-        # 		self.serial_number + '_left': self._left_depth.get_data().copy(),
-        # 		self.serial_number + '_right': self._right_depth.get_data().copy()}
+        if self.depth:
+        	self._cam.retrieve_measure(self._left_depth, sl.MEASURE.DEPTH, resolution=self.resolution)
+        	self._cam.retrieve_measure(self._right_depth, sl.MEASURE.DEPTH_RIGHT, resolution=self.resolution)
+        	data_dict['depth'] = {
+        		self.serial_number + '_left': self._left_depth.get_data().copy(),
+        		self.serial_number + '_right': self._right_depth.get_data().copy()}
         # if self.pointcloud:
         # 	self._cam.retrieve_measure(self._left_pointcloud, sl.MEASURE.XYZRGBA, resolution=self.resolution)
         # 	self._cam.retrieve_measure(self._right_pointcloud, sl.MEASURE.XYZRGBA_RIGHT, resolution=self.resolution)
