@@ -186,7 +186,7 @@ model = StereoModel(stereo_ckpt)
 model.cuda()
 
 def format_image(rgb):
-    return torch.tensor(rgb.transpose(2,0,1)[None]).to(torch.float32).cuda() / 255.0
+    return torch.tensor(rgb.transpose(0,3,1,2)).to(torch.float32).cuda() / 255.0
 
 # Need the image sides to be divisible by 32.
 height, width, _ = left_rgb.shape
@@ -194,16 +194,17 @@ height = height - height % 32
 width = width - width % 32
 left_rgb = left_rgb[:height, :width, :3]
 right_rgb = right_rgb[:height, :width, :3]
-
+left_rgb = np.expand_dims(left_rgb, axis=0)
+right_rgb = np.expand_dims(right_rgb, axis=0)
+print("LEFT SHAPE: ", format_image(left_rgb).shape)
+print("RIGHT SHAPE: ", format_image(right_rgb).shape)
+print("INTRINSICS SHAPE: ", intrinsics.shape)
 depth, disparity, disparity_sparse = model.inference(
     rgb_left=format_image(left_rgb),
     rgb_right=format_image(right_rgb),
     intrinsics=torch.tensor(intrinsics).to(torch.float32).cuda(), 
     resize=None,
 )
-
-print("DEPTH: ", depth.min())
-print("DEPTH: ", depth.max())
 
 def make_cv_disparity_image(disparity, max_disparity):
     vis_disparity = disparity / max_disparity
@@ -216,13 +217,12 @@ def make_cv_disparity_image(disparity, max_disparity):
     mapped[vis_disparity > 1.0 - 1e-3, :] = 0
     return mapped
 
-num_disparities = 384 // 2
+def write_cv_disparity_image(fname_suffix):
+    num_disparities = 384 // 2
+    disparity_vis = make_cv_disparity_image(disparity[0, 0, :, :], num_disparities)
+    disparity_sparse_vis = make_cv_disparity_image(disparity_sparse[0, 0, :, :], num_disparities)
+    cv2.imwrite("disparity_vis%s.jpg"%fname_suffix, disparity_vis)
+    cv2.imwrite("disparity_sparse_vis%s.jpg"%fname_suffix, disparity_sparse_vis)
 
-disparity_vis = make_cv_disparity_image(disparity[0, 0, :, :], num_disparities)
-disparity_sparse_vis = make_cv_disparity_image(disparity_sparse[0, 0, :, :], num_disparities)
+write_cv_disparity_image("0")
 
-# Put all the visualizations together and display in a window.
-vis = cv2.hconcat([left_rgb, disparity_vis, disparity_sparse_vis])
-vis = cv2.resize(vis, None, fx=1.0, fy=1.0, interpolation=cv2.INTER_NEAREST)
-plt.figure(figsize=(14,8))
-plt.savefig('disparity.png')

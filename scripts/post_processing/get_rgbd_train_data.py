@@ -5,6 +5,8 @@ import kornia
 import torch
 import torch.nn.functional as tfn
 import open3d as o3d
+import random
+import time
 
 import cv2
 import numpy as np
@@ -13,6 +15,7 @@ import fnmatch
 import h5py
 
 from r2d2.camera_utils.recording_readers.svo_reader import SVOReader
+torch._C._jit_set_profiling_executor(False)
 
 """Code copied from:
 efm: https://github.com/TRI-ML/efm/tree/3c164ab202878a06d130476c776af352c4736468/efm/models/depth
@@ -35,7 +38,7 @@ def is_seq(data):
     return is_tuple(data) or is_list(data)
 
 def format_image(rgb):
-    return torch.tensor(rgb.transpose(2,0,1)[None]).to(torch.float32).cuda() / 255.0
+    return torch.tensor(rgb.transpose(0,3,1,2)).to(torch.float32).cuda() / 255.0
 
 def iterate1(func):
     """Decorator to iterate over a list (first argument)"""
@@ -155,10 +158,9 @@ class StereoModel(torch.nn.Module):
 
         return depth, output["disparity"], disparity_sparse
 
-
 # Get (RGBD_1, RGBD_2, RGBD_3) for a given trajectory in addition
 # to camera intrinsics information
-def get_rgbd_tuples(filepath, stereo_ckpt):
+def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
     svo_files = []
     for root, _, files in os.walk(filepath):
         for filename in files:
@@ -193,75 +195,76 @@ def get_rgbd_tuples(filepath, stereo_ckpt):
     cam_distortions = [x for y, x in sorted(zip(serial_numbers, cam_distortions))]
     serial_numbers = sorted(serial_numbers)
 
-    # Make sure all cameras have the same framecounts
     assert frame_counts.count(frame_counts[0]) == len(frame_counts)
-    rgb_im_traj = []
-    zed_depth_im_traj = []
+    
+    left_rgb_im_traj = []
+    right_rgb_im_traj = []
     tri_depth_im_traj = []
-    for j in range(frame_counts[0]-1):
-        print("J: ", j)
-        if j > 1:
-            break
-        rgb_ims = []
-        zed_depth_ims = []
-        tri_depth_ims = []
-        for i, camera in enumerate(cameras):
+
+    for i, camera in enumerate(cameras):
+        cam_left_rgb_im_traj = []
+        cam_right_rgb_im_traj = []
+        intrinsics =  np.repeat(cam_matrices[i][np.newaxis, :, :], frame_counts[0] - 1, axis=0)
+        for j in range(frame_counts[0] - 1):
             output = camera.read_camera(return_timestamp=True)
             if output is None:
                 break
             else:
                 data_dict, timestamp = output
-            im_key = '%s_left' % serial_numbers[i]
+            im_key_left = '%s_left' % serial_numbers[i]
             im_key_right = '%s_right'  % serial_numbers[i]
-            rgb_im = cv2.cvtColor(data_dict['image'][im_key], cv2.COLOR_BGRA2BGR)
-            # cv2.imwrite("testing" + str(i) + "_rgb.jpg", rgb_im)
-            zed_depth_im =  np.expand_dims(data_dict['depth'][im_key], -1)
 
-            # Get TRI Depth
-            left_rgb, right_rgb = data_dict['image'][im_key], data_dict['image'][im_key_right]
-            intrinsics = np.array([cam_matrices[i]])
-            model = StereoModel(stereo_ckpt)
-            model.cuda()
-            # Need the image sides to be divisible by 32.
-            height, width, _ = left_rgb.shape
-            height = height - height % 32
-            width = width - width % 32
-            left_rgb = left_rgb[:height, :width, :3]
-            right_rgb = right_rgb[:height, :width, :3]
+            rgb_im_left = cv2.cvtColor(data_dict['image'][im_key_left], cv2.COLOR_BGRA2BGR)
+            rgb_im_right = cv2.cvtColor(data_dict['image'][im_key_right], cv2.COLOR_BGRA2BGR)
 
-            tri_depth_im, disparity, disparity_sparse = model.inference(
-                rgb_left=format_image(left_rgb),
-                rgb_right=format_image(right_rgb),
-                intrinsics=torch.tensor(intrinsics).to(torch.float32).cuda(), 
+            rgb_im_left = cv2.resize(rgb_im_left, (rgb_im_left.shape[0] // 2, rgb_im_left.shape[1] // 2))
+            rgb_im_right = cv2.resize(rgb_im_right, (rgb_im_right.shape[0] // 2, rgb_im_right.shape[1] // 2))
+
+            cam_left_rgb_im_traj.append(rgb_im_left)
+            cam_right_rgb_im_traj.append(rgb_im_right)
+        cam_left_rgb_im_traj = np.array(cam_left_rgb_im_traj)
+        cam_right_rgb_im_traj = np.array(cam_right_rgb_im_traj)
+
+        model = StereoModel(stereo_ckpt)
+        model.cuda()
+        # Need the image sides to be divisible by 32.
+        _, height, width, _ = cam_left_rgb_im_traj.shape
+        height = height - height % 32
+        width = width - width % 32
+        cam_left_rgb_im_traj = cam_left_rgb_im_traj[:, :height, :width, :3]
+        cam_right_rgb_im_traj = cam_right_rgb_im_traj[:, :height, :width, :3]
+
+        cam_tri_depth_im = []
+        for i in range(len(cam_left_rgb_im_traj) // batch_size + 1):
+            cam_left_rgb_batch = cam_left_rgb_im_traj[batch_size*i:batch_size*(i+1)]
+            cam_right_rgb_batch = cam_right_rgb_im_traj[batch_size*i:batch_size*(i+1)]
+            intrinsics_batch = intrinsics[batch_size*i:batch_size*(i+1)]
+            tri_depth_im_batch, disparity_batch, disparity_sparse_batch = model.inference(
+                rgb_left=format_image(cam_left_rgb_batch),
+                rgb_right=format_image(cam_right_rgb_batch),
+                intrinsics=torch.tensor(intrinsics_batch).to(torch.float32).cuda(), 
                 resize=None,
             )
-            tri_depth_im = tri_depth_im.cpu().detach().numpy()[0, 0]
-            # print("TRI DEPTH: ", tri_depth_im.shape)
-            # print("ZED DEPTH: ", zed_depth_im.shape)
-            # cv2.imwrite("testing" + str(i) + "_depth.jpg", zed_depth_im)
-            # cv2.imwrite("testing" + str(i) + "_tri_depth.jpg", tri_depth_im)
+            cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
+        cam_tri_depth_im = np.concatenate(cam_tri_depth_im, axis=0)
 
-            rgb_ims.append(rgb_im)
-            zed_depth_ims.append(zed_depth_im)
-            tri_depth_ims.append(tri_depth_im)
+        left_rgb_im_traj.append(cam_left_rgb_im_traj)
+        right_rgb_im_traj.append(cam_right_rgb_im_traj)
+        tri_depth_im_traj.append(cam_tri_depth_im)
 
-        rgb_ims = np.array(rgb_ims)
-        zed_depth_ims = np.array(zed_depth_ims)
-        tri_depth_ims = np.array(tri_depth_ims)
-
-        rgb_im_traj.append(rgb_ims)
-        zed_depth_im_traj.append(zed_depth_ims)
-        tri_depth_im_traj.append(tri_depth_ims)
-
-    rgb_im_traj = np.array(rgb_im_traj)
-    zed_depth_im_traj = np.array(zed_depth_im_traj)
+    left_rgb_im_traj = np.array(left_rgb_im_traj)
+    right_rgb_im_traj = np.array(right_rgb_im_traj)
     tri_depth_im_traj = np.array(tri_depth_im_traj)
 
     # # Close Everything #
     for camera in cameras:
         camera.disable_camera()
 
-    return rgb_im_traj, zed_depth_im_traj, tri_depth_im_traj, serial_numbers, frame_counts[0], cam_matrices, cam_distortions
+    left_rgb_im_traj = np.swapaxes(left_rgb_im_traj, 0, 1)
+    right_rgb_im_traj = np.swapaxes(right_rgb_im_traj, 0, 1)
+    tri_depth_im_traj = np.squeeze(np.swapaxes(tri_depth_im_traj, 0, 1))
+
+    return left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_counts[0], cam_matrices, cam_distortions
 
 # Get camera extrinsics
 def get_camera_extrinsics(filepath, serial_numbers, frame_count):
@@ -290,30 +293,48 @@ if __name__ == "__main__":
     r2d2_data_path = "/home/ashwinbalakrishna/Desktop/data/mixed_data"
     save_path = "/home/ashwinbalakrishna/Desktop/git-repos/r2d2"
     stereo_ckpt = "/home/ashwinbalakrishna/Desktop/git-repos/r2d2/stereo_20230724.pt"
+    num_samples_per_traj = 30
+    num_trajectories = 200
 
     hf = h5py.File(os.path.join(save_path, 'rgbd_train_data.h5'), 'a')
 
     for i, traj_name in enumerate(os.listdir(r2d2_data_path)):
         print("I: ", i, "TRAJ NAME: ", traj_name)
-        if i > 0: 
+        if traj_name in hf:
+            print("SKIPPED!")
+            continue
+        start_time = time.time()
+        if i > num_trajectories: 
             break
-        # traj_group = hf.require_group(traj_name)
         traj_path = os.path.join(r2d2_data_path, traj_name)
         svo_path = os.path.join(traj_path, 'recordings/SVO')
-        rgb_im_traj, zed_depth_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, cam_distortions = get_rgbd_tuples(svo_path, stereo_ckpt)
-        print("FRAME COUNT: ", frame_count)
-        if not len(rgb_im_traj):
+        left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, cam_distortions = get_rgbd_tuples(svo_path, stereo_ckpt)
+        if not len(left_rgb_im_traj):
             continue
         combined_extrinsics = get_camera_extrinsics(traj_path, serial_numbers, frame_count)
         actions = get_actions(traj_path, frame_count)
 
-        # assert(combined_extrinsics.shape[0] == rgb_im_traj.shape[0])
-        # assert(actions.shape[0] == actions.shape[0])
-        # traj_group.create_dataset("rgb_im_traj", data=rgb_im_traj)
-        # traj_group.create_dataset("zed_depth_im_traj", data=zed_depth_im_traj)
-        # traj_group.create_dataset("tri_depth_im_traj", data=tri_depth_im_traj)
-        # traj_group.create_dataset("actions", data=actions)
-        # traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
-        # traj_group.create_dataset("camera_matrices", data=cam_matrices)
-        # traj_group.create_dataset("camera_distortions", data=cam_distortions)
+        assert(combined_extrinsics.shape[0] == left_rgb_im_traj.shape[0])
+        assert(tri_depth_im_traj.shape[0] == left_rgb_im_traj.shape[0])
+        assert(actions.shape[0] == left_rgb_im_traj.shape[0])
+        assert(right_rgb_im_traj.shape[0] == left_rgb_im_traj.shape[0])
+
+        idxs = list(range(combined_extrinsics.shape[0]))
+        random.shuffle(idxs)
+        rand_idxs = idxs[:num_samples_per_traj]
+        left_rgb_im_traj = left_rgb_im_traj[rand_idxs]
+        right_rgb_im_traj = right_rgb_im_traj[rand_idxs]
+        tri_depth_im_traj = tri_depth_im_traj[rand_idxs]
+        actions = actions[rand_idxs]
+        combined_extrinsics = combined_extrinsics[rand_idxs]
+
+        traj_group = hf.require_group(traj_name)
+        traj_group.create_dataset("left_rgb_im_traj", data=left_rgb_im_traj.astype(np.uint8))
+        traj_group.create_dataset("right_rgb_im_traj", data=right_rgb_im_traj.astype(np.uint8))
+        traj_group.create_dataset("tri_depth_im_traj", data=tri_depth_im_traj)
+        traj_group.create_dataset("actions", data=actions)
+        traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
+        traj_group.create_dataset("camera_matrices", data=cam_matrices)
+        traj_group.create_dataset("camera_distortions", data=cam_distortions)
+        print("TIME ELAPSED: ", time.time() - start_time)
 
