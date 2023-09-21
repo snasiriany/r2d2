@@ -141,8 +141,8 @@ class SVOReader:
                     self.serial_number + "_right": self._process_frame(self._right_img),
                 }
         if self.depth:
-        	self._cam.retrieve_measure(self._left_depth, sl.MEASURE.DEPTH, resolution=self.resolution)
-        	self._cam.retrieve_measure(self._right_depth, sl.MEASURE.DEPTH_RIGHT, resolution=self.resolution)
+        	self._cam.retrieve_measure(self._left_depth, sl.MEASURE.DEPTH, resolution=self.zed_resolution)
+        	self._cam.retrieve_measure(self._right_depth, sl.MEASURE.DEPTH_RIGHT, resolution=self.zed_resolution)
         	data_dict['depth'] = {
         		self.serial_number + '_left': self._left_depth.get_data().copy(),
         		self.serial_number + '_right': self._right_depth.get_data().copy()}

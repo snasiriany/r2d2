@@ -84,18 +84,25 @@ def get_camera_extrinsics(filepath, serial_numbers, frame_count):
             extrinsics_key = str(serial_num) + "_left"
             extrinsics_trajs.append(f['/observation/camera_extrinsics/' + extrinsics_key][:])
     combined_extrinsics = np.swapaxes(np.array(extrinsics_trajs), 0, 1)[:frame_count-1]
-
     return combined_extrinsics 
+
+# Get actions
+def get_actions(filepath, frame_count):
+    filename = os.path.join(filepath, "trajectory.h5")
+    with h5py.File(filename, "r") as f:
+        cartesian_position = f["/action/cartesian_position"][:]
+        gripper_position = f["/action/gripper_position"][:]
+        actions = np.concatenate((cartesian_position, gripper_position), axis=-1)[:frame_count-1]
+    return actions
         
 
 if __name__ == "__main__":
-    r2d2_data_path = "/home/ashwinbalakrishna/Desktop/data/r2d2data"
+    r2d2_data_path = "/home/ashwinbalakrishna/Desktop/data/mixed_data"
     save_path = "/home/ashwinbalakrishna/Desktop/git-repos/r2d2"
 
     hf = h5py.File(os.path.join(save_path, 'rgbd_train_data.h5'), 'a')
 
     for i, traj_name in enumerate(os.listdir(r2d2_data_path)):
-        print("I: ", i, "TRAJ NAME: ", traj_name)
         if i > 100: 
             break
         traj_group = hf.require_group(traj_name)
@@ -105,9 +112,12 @@ if __name__ == "__main__":
         if not len(rgbd_im_traj):
             continue
         combined_extrinsics = get_camera_extrinsics(traj_path, serial_numbers, frame_count)
-        assert(combined_extrinsics.shape[0] == rgbd_im_traj.shape[0])
+        actions = get_actions(traj_path, frame_count)
 
+        assert(combined_extrinsics.shape[0] == rgbd_im_traj.shape[0])
+        assert(actions.shape[0] == actions.shape[0])
         traj_group.create_dataset("rgbd_im_traj", data=rgbd_im_traj)
+        traj_group.create_dataset("actions", data=actions)
         traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
         traj_group.create_dataset("camera_matrices", data=cam_matrices)
         traj_group.create_dataset("camera_distortions", data=cam_distortions)
