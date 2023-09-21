@@ -297,7 +297,7 @@ if __name__ == "__main__":
         print("I: ", i, "TRAJ NAME: ", traj_name)
         if i > 0: 
             break
-        traj_group = hf.require_group(traj_name)
+        # traj_group = hf.require_group(traj_name)
         traj_path = os.path.join(r2d2_data_path, traj_name)
         svo_path = os.path.join(traj_path, 'recordings/SVO')
         rgb_im_traj, zed_depth_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, cam_distortions = get_rgbd_tuples(svo_path, stereo_ckpt)
@@ -309,11 +309,11 @@ if __name__ == "__main__":
 
         # assert(combined_extrinsics.shape[0] == rgb_im_traj.shape[0])
         # assert(actions.shape[0] == actions.shape[0])
-        traj_group.create_dataset("rgb_im_traj", data=rgb_im_traj)
-        traj_group.create_dataset("zed_depth_im_traj", data=zed_depth_im_traj)
-        traj_group.create_dataset("tri_depth_im_traj", data=tri_depth_im_traj)
-        traj_group.create_dataset("actions", data=actions)
-        traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
-        traj_group.create_dataset("camera_matrices", data=cam_matrices)
-        traj_group.create_dataset("camera_distortions", data=cam_distortions)
+        # traj_group.create_dataset("rgb_im_traj", data=rgb_im_traj)
+        # traj_group.create_dataset("zed_depth_im_traj", data=zed_depth_im_traj)
+        # traj_group.create_dataset("tri_depth_im_traj", data=tri_depth_im_traj)
+        # traj_group.create_dataset("actions", data=actions)
+        # traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
+        # traj_group.create_dataset("camera_matrices", data=cam_matrices)
+        # traj_group.create_dataset("camera_distortions", data=cam_distortions)
 
