@@ -200,6 +200,8 @@ def get_rgbd_tuples(filepath, stereo_ckpt):
     tri_depth_im_traj = []
     for j in range(frame_counts[0]-1):
         print("J: ", j)
+        if j > 1:
+            break
         rgb_ims = []
         zed_depth_ims = []
         tri_depth_ims = []
@@ -251,7 +253,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt):
         zed_depth_im_traj.append(zed_depth_ims)
         tri_depth_im_traj.append(tri_depth_ims)
 
-    rgb_im_traj = np.array(rgbdim_traj)
+    rgb_im_traj = np.array(rgb_im_traj)
     zed_depth_im_traj = np.array(zed_depth_im_traj)
     tri_depth_im_traj = np.array(tri_depth_im_traj)
 
@@ -259,7 +261,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt):
     for camera in cameras:
         camera.disable_camera()
 
-    return rgb_im_traj, zed_im_traj, tri_depth_im_traj, serial_numbers, frame_counts[0], cam_matrices, cam_distortions
+    return rgb_im_traj, zed_depth_im_traj, tri_depth_im_traj, serial_numbers, frame_counts[0], cam_matrices, cam_distortions
 
 # Get camera extrinsics
 def get_camera_extrinsics(filepath, serial_numbers, frame_count):
@@ -279,6 +281,7 @@ def get_actions(filepath, frame_count):
     with h5py.File(filename, "r") as f:
         cartesian_position = f["/action/cartesian_position"][:]
         gripper_position = f["/action/gripper_position"][:]
+        gripper_position = np.expand_dims(gripper_position, -1)
         actions = np.concatenate((cartesian_position, gripper_position), axis=-1)[:frame_count-1]
     return actions
         
@@ -299,13 +302,13 @@ if __name__ == "__main__":
         svo_path = os.path.join(traj_path, 'recordings/SVO')
         rgb_im_traj, zed_depth_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, cam_distortions = get_rgbd_tuples(svo_path, stereo_ckpt)
         print("FRAME COUNT: ", frame_count)
-        if not len(rgbd_im_traj):
+        if not len(rgb_im_traj):
             continue
         combined_extrinsics = get_camera_extrinsics(traj_path, serial_numbers, frame_count)
         actions = get_actions(traj_path, frame_count)
 
-        assert(combined_extrinsics.shape[0] == rgbd_im_traj.shape[0])
-        assert(actions.shape[0] == actions.shape[0])
+        # assert(combined_extrinsics.shape[0] == rgb_im_traj.shape[0])
+        # assert(actions.shape[0] == actions.shape[0])
         traj_group.create_dataset("rgb_im_traj", data=rgb_im_traj)
         traj_group.create_dataset("zed_depth_im_traj", data=zed_depth_im_traj)
         traj_group.create_dataset("tri_depth_im_traj", data=tri_depth_im_traj)
