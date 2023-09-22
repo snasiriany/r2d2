@@ -156,7 +156,7 @@ class StereoModel(torch.nn.Module):
         depth = torch.zeros_like(disparity_sparse)
         depth[mask] = self.baseline * intrinsics[0, 0, 0] / disparity_sparse[mask]
 
-        return depth, output["disparity"], disparity_sparse
+        return depth, output["disparity"], disparity_sparse, rgb_left, rgb_right, intrinsics
 
 # Get (RGBD_1, RGBD_2, RGBD_3) for a given trajectory in addition
 # to camera intrinsics information
@@ -167,13 +167,12 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
             if fnmatch.fnmatch(filename, "*.svo"):
                 svo_files.append(os.path.join(root, filename))
     if len(svo_files) == 0:
-        return [], [], [], [], [], [], []
+        return [], [], [], [], [], []
 
     cameras = []
     frame_counts = []
     serial_numbers = []
     cam_matrices = []
-    cam_distortions = []
 
     for svo_file in svo_files:
         # Open SVO Reader
@@ -183,7 +182,6 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
         im_key = '%s_left' % serial_number
         # Intrinsics are the same for the left and the right camera
         cam_matrices.append(camera.get_camera_intrinsics()[im_key]['cameraMatrix'])
-        cam_distortions.append(camera.get_camera_intrinsics()[im_key]['distCoeffs'])
         frame_count = camera.get_frame_count()
         cameras.append(camera)
         frame_counts.append(frame_count)
@@ -192,7 +190,6 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
     # return serial_numbers
     cameras = [x for y, x in sorted(zip(serial_numbers, cameras))]
     cam_matrices = [x for y, x in sorted(zip(serial_numbers, cam_matrices))]
-    cam_distortions = [x for y, x in sorted(zip(serial_numbers, cam_distortions))]
     serial_numbers = sorted(serial_numbers)
 
     assert frame_counts.count(frame_counts[0]) == len(frame_counts)
@@ -217,9 +214,6 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
             rgb_im_left = cv2.cvtColor(data_dict['image'][im_key_left], cv2.COLOR_BGRA2BGR)
             rgb_im_right = cv2.cvtColor(data_dict['image'][im_key_right], cv2.COLOR_BGRA2BGR)
 
-            rgb_im_left = cv2.resize(rgb_im_left, (rgb_im_left.shape[0] // 2, rgb_im_left.shape[1] // 2))
-            rgb_im_right = cv2.resize(rgb_im_right, (rgb_im_right.shape[0] // 2, rgb_im_right.shape[1] // 2))
-
             cam_left_rgb_im_traj.append(rgb_im_left)
             cam_right_rgb_im_traj.append(rgb_im_right)
         cam_left_rgb_im_traj = np.array(cam_left_rgb_im_traj)
@@ -235,22 +229,34 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
         cam_right_rgb_im_traj = cam_right_rgb_im_traj[:, :height, :width, :3]
 
         cam_tri_depth_im = []
-        for i in range(len(cam_left_rgb_im_traj) // batch_size + 1):
-            cam_left_rgb_batch = cam_left_rgb_im_traj[batch_size*i:batch_size*(i+1)]
-            cam_right_rgb_batch = cam_right_rgb_im_traj[batch_size*i:batch_size*(i+1)]
-            intrinsics_batch = intrinsics[batch_size*i:batch_size*(i+1)]
-            tri_depth_im_batch, disparity_batch, disparity_sparse_batch = model.inference(
+        cam_left_rgb_im_traj_resized = []
+        cam_right_rgb_im_traj_resized = []
+        for k in range(len(cam_left_rgb_im_traj) // batch_size + 1):
+            cam_left_rgb_batch = cam_left_rgb_im_traj[batch_size*k:batch_size*(k+1)]
+            cam_right_rgb_batch = cam_right_rgb_im_traj[batch_size*k:batch_size*(k+1)]
+            intrinsics_batch = intrinsics[batch_size*k:batch_size*(k+1)]
+            if len(intrinsics_batch) == 0:
+                continue
+            H, W = cam_left_rgb_batch.shape[1], cam_left_rgb_batch.shape[2]
+            tri_depth_im_batch, disparity_batch, disparity_sparse_batch, cam_left_rgb_resized_batch, cam_right_rgb_resized_batch, resized_intrinsics = model.inference(
                 rgb_left=format_image(cam_left_rgb_batch),
                 rgb_right=format_image(cam_right_rgb_batch),
                 intrinsics=torch.tensor(intrinsics_batch).to(torch.float32).cuda(), 
-                resize=None,
+                resize=((H//2, W//2)),
             )
             cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
+            cam_left_rgb_im_traj_resized.append(cam_left_rgb_resized_batch.cpu().detach().numpy())
+            cam_right_rgb_im_traj_resized.append(cam_right_rgb_resized_batch.cpu().detach().numpy())
+        
+        cam_left_rgb_im_traj_resized = np.concatenate(cam_left_rgb_im_traj_resized, axis=0)
+        cam_right_rgb_im_traj_resized = np.concatenate(cam_right_rgb_im_traj_resized, axis=0)
         cam_tri_depth_im = np.concatenate(cam_tri_depth_im, axis=0)
 
-        left_rgb_im_traj.append(cam_left_rgb_im_traj)
-        right_rgb_im_traj.append(cam_right_rgb_im_traj)
+        left_rgb_im_traj.append(255*np.transpose(cam_left_rgb_im_traj_resized, (0, 2, 3, 1)))
+        right_rgb_im_traj.append(255*np.transpose(cam_right_rgb_im_traj_resized, (0, 2, 3, 1)))
         tri_depth_im_traj.append(cam_tri_depth_im)
+
+        cam_matrices[i] = resized_intrinsics.cpu().detach().numpy()[0]
 
     left_rgb_im_traj = np.array(left_rgb_im_traj)
     right_rgb_im_traj = np.array(right_rgb_im_traj)
@@ -264,7 +270,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
     right_rgb_im_traj = np.swapaxes(right_rgb_im_traj, 0, 1)
     tri_depth_im_traj = np.squeeze(np.swapaxes(tri_depth_im_traj, 0, 1))
 
-    return left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_counts[0], cam_matrices, cam_distortions
+    return left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_counts[0], cam_matrices
 
 # Get camera extrinsics
 def get_camera_extrinsics(filepath, serial_numbers, frame_count):
@@ -294,7 +300,7 @@ if __name__ == "__main__":
     save_path = "/home/ashwinbalakrishna/Desktop/git-repos/r2d2"
     stereo_ckpt = "/home/ashwinbalakrishna/Desktop/git-repos/r2d2/stereo_20230724.pt"
     num_samples_per_traj = 30
-    num_trajectories = 200
+    num_trajectories = 1500
 
     hf = h5py.File(os.path.join(save_path, 'rgbd_train_data.h5'), 'a')
 
@@ -308,7 +314,7 @@ if __name__ == "__main__":
             break
         traj_path = os.path.join(r2d2_data_path, traj_name)
         svo_path = os.path.join(traj_path, 'recordings/SVO')
-        left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, cam_distortions = get_rgbd_tuples(svo_path, stereo_ckpt)
+        left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices = get_rgbd_tuples(svo_path, stereo_ckpt)
         if not len(left_rgb_im_traj):
             continue
         combined_extrinsics = get_camera_extrinsics(traj_path, serial_numbers, frame_count)
@@ -335,6 +341,5 @@ if __name__ == "__main__":
         traj_group.create_dataset("actions", data=actions)
         traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
         traj_group.create_dataset("camera_matrices", data=cam_matrices)
-        traj_group.create_dataset("camera_distortions", data=cam_distortions)
         print("TIME ELAPSED: ", time.time() - start_time)
 
