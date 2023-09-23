@@ -118,10 +118,9 @@ class StereoModel(torch.nn.Module):
         baseline (float): Camera baseline. Defaults to 0.12 (ZED baseline)
     """
 
-    def __init__(self, ckpt: str = None, baseline: float = 0.12):
+    def __init__(self, ckpt: str = None):
         super().__init__()
         # Initialize model
-        self.baseline = baseline
         self.model = torch.jit.load(ckpt).cuda()
         self.model.eval()
 
@@ -131,6 +130,7 @@ class StereoModel(torch.nn.Module):
         rgb_right: torch.Tensor,
         intrinsics: torch.Tensor,
         resize: tuple = None,
+        baseline: float = 0.12
     ):
         """Performs inference on input data
 
@@ -154,7 +154,7 @@ class StereoModel(torch.nn.Module):
         disparity_sparse = output["disparity_sparse"]
         mask = disparity_sparse != 0
         depth = torch.zeros_like(disparity_sparse)
-        depth[mask] = self.baseline * intrinsics[0, 0, 0] / disparity_sparse[mask]
+        depth[mask] = baseline * intrinsics[0, 0, 0] / disparity_sparse[mask]
 
         return depth, output["disparity"], disparity_sparse, rgb_left, rgb_right, intrinsics
 
@@ -243,6 +243,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=128):
                 rgb_right=format_image(cam_right_rgb_batch),
                 intrinsics=torch.tensor(intrinsics_batch).to(torch.float32).cuda(), 
                 resize=((H//2, W//2)),
+                baseline=camera.get_camera_baseline()
             )
             cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
             cam_left_rgb_im_traj_resized.append(cam_left_rgb_resized_batch.cpu().detach().numpy())
@@ -302,7 +303,7 @@ if __name__ == "__main__":
     num_samples_per_traj = 30
     num_trajectories = 1500
 
-    hf = h5py.File(os.path.join(save_path, 'rgbd_train_data.h5'), 'a')
+    hf = h5py.File(os.path.join(save_path, 'rgbd_train_data_fix_scaling_mini.h5'), 'a')
 
     for i, traj_name in enumerate(os.listdir(r2d2_data_path)):
         print("I: ", i, "TRAJ NAME: ", traj_name)

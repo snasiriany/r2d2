@@ -76,6 +76,10 @@ class SVOReader:
             self.serial_number + "_right": self._process_intrinsics(calib_params.right_cam),
         }
 
+    def get_camera_baseline(self):
+        # Convert baseline to meters and return
+        return 0.001 * self._cam.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
+
     ### Calibration Utilities ###
     def _process_intrinsics(self, params):
         intrinsics = {}

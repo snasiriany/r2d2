@@ -134,10 +134,9 @@ class StereoModel(torch.nn.Module):
         baseline (float): Camera baseline. Defaults to 0.12 (ZED baseline)
     """
 
-    def __init__(self, ckpt: str = None, baseline: float = 0.12):
+    def __init__(self, ckpt: str = None):
         super().__init__()
         # Initialize model
-        self.baseline = baseline
         self.model = torch.jit.load(ckpt).cuda()
         self.model.eval()
 
@@ -147,6 +146,7 @@ class StereoModel(torch.nn.Module):
         rgb_right: torch.Tensor,
         intrinsics: torch.Tensor,
         resize: tuple = None,
+        baseline: float = 0.12
     ):
         """Performs inference on input data
 
@@ -170,7 +170,7 @@ class StereoModel(torch.nn.Module):
         disparity_sparse = output["disparity_sparse"]
         mask = disparity_sparse != 0
         depth = torch.zeros_like(disparity_sparse)
-        depth[mask] = self.baseline * intrinsics[0, 0, 0] / disparity_sparse[mask]
+        depth[mask] = baseline * intrinsics[0, 0, 0] / disparity_sparse[mask]
 
         return depth, output["disparity"], disparity_sparse
 
