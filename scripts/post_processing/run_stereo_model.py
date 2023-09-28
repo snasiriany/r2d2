@@ -5,36 +5,14 @@ import numpy as np
 import open3d as o3d
 import torch
 import torch.nn.functional as tfn
+import time
+import os
+import fnmatch
 
 from r2d2.trajectory_utils.misc import load_trajectory
+from r2d2.camera_utils.recording_readers.svo_reader import SVOReader
 
 torch._C._jit_set_profiling_executor(False)
-
-filepath = "/home/ashwinbalakrishna/Desktop/data/mixed_data/Fri_Apr_21_10:35:02_2023/trajectory.h5"
-recording_folderpath = "/home/ashwinbalakrishna/Desktop/data/mixed_data/Fri_Apr_21_10:35:02_2023/recordings/SVO"
-traj = load_trajectory(filepath, recording_folderpath=recording_folderpath)
-
-timestep = 0
-frame = traj[timestep]
-obs = frame["observation"]
-image_obs = obs["image"]
-cam_id = "19824535"
-left_key, right_key = f"{cam_id}_left", f"{cam_id}_right"
-left_rgb, right_rgb = image_obs[left_key], image_obs[right_key]
-left_pose, right_pose = obs["camera_extrinsics"][left_key], obs["camera_extrinsics"][right_key]
-
-# TODO(Ashwin): update intrinsics with correct one's you read from SVO
-# I'm hardcoding intrinsics right now but these need to come from the actual cameras.
-# That can be accomplished by loading cameras in r2d2 (the relevant class is `ZedCamera`).
-fx = 1075.0 / 2.0
-fy = 1220.0 / 2.0
-cx = 1280.0 / 4.0
-cy = 1024.0 / 4.0
-intrinsics = np.array([
-    [[fx, 0.0,     cx],
-    [0.0,     fy, cy],
-    [0.0,     0.0,     1.0]]
-])
 
 """Code copied from:
 efm: https://github.com/TRI-ML/efm/tree/3c164ab202878a06d130476c776af352c4736468/efm/models/depth
@@ -186,25 +164,7 @@ model = StereoModel(stereo_ckpt)
 model.cuda()
 
 def format_image(rgb):
-    return torch.tensor(rgb.transpose(0,3,1,2)).to(torch.float32).cuda() / 255.0
-
-# Need the image sides to be divisible by 32.
-height, width, _ = left_rgb.shape
-height = height - height % 32
-width = width - width % 32
-left_rgb = left_rgb[:height, :width, :3]
-right_rgb = right_rgb[:height, :width, :3]
-left_rgb = np.expand_dims(left_rgb, axis=0)
-right_rgb = np.expand_dims(right_rgb, axis=0)
-print("LEFT SHAPE: ", format_image(left_rgb).shape)
-print("RIGHT SHAPE: ", format_image(right_rgb).shape)
-print("INTRINSICS SHAPE: ", intrinsics.shape)
-depth, disparity, disparity_sparse = model.inference(
-    rgb_left=format_image(left_rgb),
-    rgb_right=format_image(right_rgb),
-    intrinsics=torch.tensor(intrinsics).to(torch.float32).cuda(), 
-    resize=None,
-)
+    return torch.tensor(rgb.transpose(2,0,1)[None]).to(torch.float32).cuda() / 255.0
 
 def make_cv_disparity_image(disparity, max_disparity):
     vis_disparity = disparity / max_disparity
@@ -217,12 +177,109 @@ def make_cv_disparity_image(disparity, max_disparity):
     mapped[vis_disparity > 1.0 - 1e-3, :] = 0
     return mapped
 
-def write_cv_disparity_image(fname_suffix):
-    num_disparities = 384 // 2
-    disparity_vis = make_cv_disparity_image(disparity[0, 0, :, :], num_disparities)
-    disparity_sparse_vis = make_cv_disparity_image(disparity_sparse[0, 0, :, :], num_disparities)
-    cv2.imwrite("disparity_vis%s.jpg"%fname_suffix, disparity_vis)
-    cv2.imwrite("disparity_sparse_vis%s.jpg"%fname_suffix, disparity_sparse_vis)
+# filepath = "/home/ashwinbalakrishna/Desktop/data/mixed_data/Fri_Apr_21_10:35:02_2023"
+# filepath = "/home/ashwinbalakrishna/Desktop/data/mixed_data/Wed_May__3_09:35:06_2023"
+filepath = "/home/ashwinbalakrishna/Desktop/data/r2d2data/lab-uploads/AUTOLab/success/2023-07-07/Fri_Jul__7_14:57:48_2023"
+traj_filepath = os.path.join(filepath, "trajectory.h5")
+recording_folderpath = os.path.join(filepath, "recordings/SVO")
+traj = load_trajectory(traj_filepath, recording_folderpath=recording_folderpath)
 
-write_cv_disparity_image("0")
+svo_files = []
+for root, _, files in os.walk(recording_folderpath):
+    for filename in files:
+        if fnmatch.fnmatch(filename, "*.svo"):
+            svo_files.append(os.path.join(root, filename))
 
+cameras = []
+frame_counts = []
+serial_numbers = []
+cam_matrices = []
+cam_baselines = []
+
+for svo_file in svo_files:
+    # Open SVO Reader
+    serial_number = svo_file.split("/")[-1][:-4]
+    camera = SVOReader(svo_file, serial_number=serial_number)
+    camera.set_reading_parameters(image=True, depth=True, pointcloud=False, concatenate_images=False)
+    im_key = '%s_left' % serial_number
+    # Intrinsics are the same for the left and the right camera
+    cam_matrices.append(camera.get_camera_intrinsics()[im_key]['cameraMatrix'])
+    cam_baselines.append(camera.get_camera_baseline())
+    frame_count = camera.get_frame_count()
+    cameras.append(camera)
+    frame_counts.append(frame_count)
+    serial_numbers.append(serial_number)
+
+# return serial_numbers
+cameras = [x for y, x in sorted(zip(serial_numbers, cameras))]
+cam_matrices = [x for y, x in sorted(zip(serial_numbers, cam_matrices))]
+cam_baselines = [x for y, x in sorted(zip(serial_numbers, cam_baselines))]
+serial_numbers = sorted(serial_numbers)
+
+assert frame_counts.count(frame_counts[0]) == len(frame_counts)
+
+timestep = np.random.randint(frame_counts[0])
+frame = traj[timestep]
+obs = frame["observation"]
+image_obs = obs["image"]
+depth_obs = obs["depth"]
+
+zed_depths = []
+tri_depths = []
+left_rgbs = []
+right_rgbs = []
+num_disparities = 384 // 2
+
+for i, cam_id in enumerate(serial_numbers):
+    left_key, right_key = f"{cam_id}_left", f"{cam_id}_right"
+    left_rgb, right_rgb = image_obs[left_key], image_obs[right_key] 
+    intrinsics = np.array([cam_matrices[i]])
+    baseline = cam_baselines[i]
+    # Need the image sides to be divisible by 32.
+    height, width, _ = left_rgb.shape
+    height = height - height % 32
+    width = width - width % 32
+    left_rgb = left_rgb[:height, :width, :3]
+    right_rgb = right_rgb[:height, :width, :3]
+    left_rgbs.append(left_rgb)
+    right_rgbs.append(right_rgb)
+
+    depth, disparity, disparity_sparse = model.inference(
+        rgb_left=format_image(left_rgb),
+        rgb_right=format_image(right_rgb),
+        intrinsics=torch.tensor(intrinsics).to(torch.float32).cuda(), 
+        resize=None,
+        baseline=cam_baselines[i]
+    )
+
+    zed_depths.append(depth_obs[left_key])
+    tri_depths.append(depth)
+
+images = []
+for serial_num, zed_depth, tri_depth, left_rgb, right_rgb in zip(serial_numbers, zed_depths, tri_depths, left_rgbs, right_rgbs):
+    zed_depth[np.isnan(zed_depth)] = 0
+    zed_depth[np.isinf(zed_depth)] = 1_000
+    zed_depth = zed_depth / 1_000
+    zed_depth_vis = make_cv_disparity_image(torch.tensor(zed_depth), 9.0)
+    tri_depth_vis = make_cv_disparity_image(tri_depth[0, 0, :, :], 9.0)
+    images.append(left_rgb)
+    images.append(right_rgb)
+    images.append(zed_depth_vis)
+    images.append(tri_depth_vis)
+
+# Create a 3x4 subplot grid
+fig, axes = plt.subplots(3, 4, figsize=(12, 5))
+titles = ["Left RGB", "Right RGB", "ZED Depth", "TRI Depth"] * 3
+
+# Iterate through the images and display them on the subplots
+for i, ax in enumerate(axes.ravel()):
+    if i < len(images):
+        ax.imshow(cv2.cvtColor(images[i], cv2.COLOR_BGR2RGB))  # Assuming your images are grayscale, change the cmap as needed
+        if i < 4:
+            ax.set_title(titles[i])
+        ax.axis('off')  # Turn off axis labels
+
+# Adjust spacing and display the plot
+# plt.subplots_adjust(wspace=0.05, hspace=0.05)
+# Save the figure as an image (e.g., PNG)
+plt.savefig('depth_image_grid_2.png', bbox_inches='tight')
