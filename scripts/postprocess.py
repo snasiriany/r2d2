@@ -87,6 +87,11 @@ REGISTERED_MEMBERS: Dict[str, Dict[str, str]] = {
         "Heng Wei": "4f8ca688",
         "Albert Zhan": "de601749",
     },
+
+    "RPL": {
+        "Abhiram Maddukuri": "cb4f6842",
+        "Soroush Nasiriany": "38ccaeb7",
+    }
 }
 validate_user2id(REGISTERED_MEMBERS)
 
@@ -106,7 +111,7 @@ REGISTERED_ALIASES: Dict[str, Tuple[str, str]] = {
 @dataclass
 class R2D2UploadConfig:
     # fmt: off
-    lab: str                                        # Lab ID (all uppercase) -- e.g., "CLVR", "ILIAD", "REAL"
+    lab: str = "RPL"                                # Lab ID (all uppercase) -- e.g., "CLVR", "ILIAD", "REAL"
     data_dir: Path = Path("data")                   # Path to top-level directory with "success"/"failure" directories
 
     # Stage Handling
