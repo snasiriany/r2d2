@@ -208,16 +208,18 @@ def get_input_output_paths(r2d2_data_path, save_path):
     output_traj_paths = []
     
     for traj_path in input_traj_paths:
-        relative_path = traj_path.split('lab-uploads/', 1)[-1].strip()
-        output_traj_paths.append(os.path.join(save_path, 'lab-uploads/', relative_path))
+        relative_path = traj_path.split('raw_r2d2_full/', 1)[-1].strip()
+        output_traj_paths.append(os.path.join(save_path, 'raw_r2d2_full/', relative_path))
     return input_traj_paths, output_traj_paths
 
 def main(process_id, num_processes):
     device_name = torch.cuda.get_device_name().replace(" ", "_")
-    engine_path = os.path.join("/home/ashwinbalakrishna/Desktop/trt_stereo", 
-        "stereo_{}_h{}_w{}_d{}__{}.engine".format(VARIANT, HEIGHT, WIDTH, NUM_DISPARITIES, device_name))
-    r2d2_data_path = "/home/ashwinbalakrishna/Desktop/data/r2d2data/lab-uploads"
-    save_path = "/home/ashwinbalakrishna/Desktop/data/define_train_data/r2d2_all"
+    print("DEVICE NAME: ", device_name)
+    engine_path = os.path.join("/home/ubuntu/trt_stereo", 
+        "stereo_{}_h{}_w{}_b_{}_d{}__{}.engine".format(VARIANT, HEIGHT, WIDTH, NUM_DISPARITIES, TRT_BATCH_SIZE, device_name))
+    print("ENGINE PATH: ", engine_path)
+    r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
+    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
     resize_shape = (WIDTH, HEIGHT)
 
     num_samples_per_traj = 32
@@ -225,7 +227,16 @@ def main(process_id, num_processes):
     num_failures = 0
     os.makedirs(save_path, exist_ok=True)
 
-    input_traj_paths, output_traj_paths = get_input_output_paths(r2d2_data_path, save_path)
+    if os.path.exists('filepaths.pkl'):
+        with open('filepaths.pkl', 'rb') as file:
+            path_info = pickle.load(file)
+            input_traj_paths, output_traj_paths = path_info["input_paths"], path_info["output_paths"]
+    else:
+        input_traj_paths, output_traj_paths = get_input_output_paths(r2d2_data_path, save_path)
+        with open('filepaths.pkl', 'wb') as file:
+            # Dump the object into the pickle file
+            pickle.dump({"input_paths": input_traj_paths, "output_paths": output_traj_paths}, file)
+    
     if os.path.exists(os.path.join(save_path, 'failures.pkl')):
         with open(os.path.join(save_path, 'failures.pkl'), 'rb') as file:
             # Load the object from the pickle file
@@ -236,7 +247,7 @@ def main(process_id, num_processes):
     
     for i, (input_traj_path, output_traj_path) in enumerate(zip(input_traj_paths, output_traj_paths)):
         if i % num_processes == process_id:
-            traj_name = input_traj_path.split("lab-uploads/")[-1]
+            traj_name = input_traj_path.split("raw_r2d2_full/")[-1]
             failure = False
             for key in failures:
                 if traj_name in failures[key]:
@@ -335,7 +346,7 @@ def main(process_id, num_processes):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--process_id', type=int)
-    parser.add_argument('--num_processes', type=int)
+    parser.add_argument('--process_id', type=int, default=0)
+    parser.add_argument('--num_processes', type=int, default=1)
     args = parser.parse_args()
     main(args.process_id, args.num_processes)
