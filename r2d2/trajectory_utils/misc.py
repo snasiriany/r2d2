@@ -333,7 +333,7 @@ def load_trajectory(
         camera_reader = RecordedMultiCameraWrapper(recording_folderpath, camera_kwargs)
 
     horizon = traj_reader.length()
-    if horizon > 5000:
+    if horizon > 1000:
         return None
     timestep_list = []
 

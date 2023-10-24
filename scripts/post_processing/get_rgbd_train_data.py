@@ -17,12 +17,154 @@ from r2d2.camera_utils.recording_readers.svo_reader import SVOReader
 from r2d2.trajectory_utils.misc import load_trajectory
 
 VARIANT = "base"
-TRT_LOG_LEVEL = trt.Logger.ERROR
 NUM_DISPARITIES = 384
 HEIGHT = 704
 WIDTH = 1280
 MAX_DEPTH = 10
-TRT_BATCH_SIZE = 32
+BATCH_SIZE = 32
+USE_TRT_MODEL = True
+TRT_LOG_LEVEL = trt.Logger.ERROR
+
+if not USE_TRT_MODEL:
+    torch._C._jit_set_profiling_executor(False)
+
+"""Code copied from:
+efm: https://github.com/TRI-ML/efm/tree/3c164ab202878a06d130476c776af352c4736468/efm/models/depth
+vidar: https://github.com/TRI-ML/efm/blob/3c164ab202878a06d130476c776af352c4736468/efm/models/depth/utils.py
+"""
+
+def is_tensor(data):
+    return type(data) == torch.Tensor
+
+def is_tuple(data):
+    return isinstance(data, tuple)
+
+def is_list(data):
+    return isinstance(data, list) or isinstance(data, torch.nn.ModuleList)
+
+def is_dict(data):
+    return isinstance(data, dict) or isinstance(data, torch.nn.ModuleDict)
+
+def is_seq(data):
+    return is_tuple(data) or is_list(data)
+
+def iterate1(func):
+    """Decorator to iterate over a list (first argument)"""
+    def inner(var, *args, **kwargs):
+        if is_seq(var):
+            return [func(v, *args, **kwargs) for v in var]
+        elif is_dict(var):
+            return {key: func(val, *args, **kwargs) for key, val in var.items()}
+        else:
+            return func(var, *args, **kwargs)
+    return inner
+
+
+@iterate1
+def interpolate(tensor, size, scale_factor, mode):
+    if size is None and scale_factor is None:
+        return tensor
+    if is_tensor(size):
+        size = size.shape[-2:]
+    return tfn.interpolate(
+        tensor, size=size, scale_factor=scale_factor,
+        recompute_scale_factor=False, mode=mode,
+        align_corners=None,
+    )
+
+
+def resize_input(
+    rgb: torch.Tensor,
+    intrinsics: torch.Tensor = None,
+    resize: tuple = None
+):
+    """Resizes input data
+
+    Args:
+        rgb (torch.Tensor): input image (B,3,H,W)
+        intrinsics (torch.Tensor): camera intrinsics (B,3,3)
+        resize (tuple, optional): resize shape. Defaults to None.
+
+    Returns:
+        rgb: resized image (B,3,h,w)
+        intrinsics: resized intrinsics (B,3,3)
+    """
+    # Don't resize if not requested
+    if resize is None:
+        if intrinsics is None:
+            return rgb
+        else:
+            return rgb, intrinsics
+    # Resize rgb
+    orig_shape = [float(v) for v in rgb.shape[-2:]]
+    rgb = interpolate(rgb, mode="bilinear", scale_factor=None, size=resize)
+    # Return only rgb if there are no intrinsics
+    if intrinsics is None:
+        return rgb
+    # Resize intrinsics
+    shape = [float(v) for v in rgb.shape[-2:]]
+    intrinsics = intrinsics.clone()
+    intrinsics[:, 0] *= shape[1] / orig_shape[1]
+    intrinsics[:, 1] *= shape[0] / orig_shape[0]
+    # return resized input
+    return rgb, intrinsics
+
+class StereoModel(torch.nn.Module):
+    """Learned Stereo model.
+
+    Takes as input two images plus intrinsics and outputs a metrically scaled depth map.
+
+    Taken from: https://github.com/ToyotaResearchInstitute/mmt_stereo_inference
+    Paper here: https://arxiv.org/pdf/2109.11644.pdf
+    Authors: Krishna Shankar, Mark Tjersland, Jeremy Ma, Kevin Stone, Max Bajracharya
+
+    Pre-trained checkpoint here: s3://tri-ml-models/efm/depth/stereo.pt
+
+    Args:
+        cfg (Config): configuration file to initialize the model
+        ckpt (str, optional): checkpoint path to load a pre-trained model. Defaults to None.
+        baseline (float): Camera baseline. Defaults to 0.12 (ZED baseline)
+    """
+
+    def __init__(self, ckpt: str = None):
+        super().__init__()
+        # Initialize model
+        self.model = torch.jit.load(ckpt).cuda()
+        self.model.eval()
+
+    def inference(
+        self,
+        rgb_left: torch.Tensor,
+        rgb_right: torch.Tensor,
+        intrinsics: torch.Tensor,
+        resize: tuple = None,
+        baseline: float = 0.12
+    ):
+        """Performs inference on input data
+
+        Args:
+            rgb_left (torch.Tensor): input float32 image (B,3,H,W)
+            rgb_right (torch.Tensor): input float32 image (B,3,H,W)
+            intrinsics (torch.Tensor): camera intrinsics (B,3,3)
+            resize (tuple, optional): resize shape. Defaults to None.
+
+        Returns:
+            depth: output depth map (B,1,H,W)
+        """
+        rgb_left, intrinsics = resize_input(
+            rgb=rgb_left, intrinsics=intrinsics, resize=resize
+        )
+        rgb_right = resize_input(rgb=rgb_right, resize=resize)
+
+        with torch.no_grad():
+            output, _ = self.model(rgb_left, rgb_right)
+
+        disparity_sparse = output["disparity_sparse"]
+        mask = disparity_sparse != 0
+        depth = torch.zeros_like(disparity_sparse)
+        depth[mask] = baseline * intrinsics[0, 0, 0] / disparity_sparse[mask]
+
+        return depth, output["disparity"], disparity_sparse
 
 # Function to get evenly spaced samples with first and last included
 def get_evenly_spaced_samples(lst, num_samples):
@@ -33,7 +175,10 @@ def get_evenly_spaced_samples(lst, num_samples):
         return [lst[int(i * step)] for i in range(num_samples)]  # Generate samples
 
 def format_image(rgb):
-    return (torch.tensor(rgb.transpose(0,3,1,2)).to(torch.float32).cuda() / 255.0).contiguous()
+    format_image = (torch.tensor(rgb.transpose(0,3,1,2)).to(torch.float32).cuda() / 255.0)
+    if USE_TRT_MODEL:
+        format_image = format_image.contiguous()
+    return format_image
 
 def make_disparity_vis(disparity, max_disparity=NUM_DISPARITIES):
     vis_disparity = disparity / max_disparity
@@ -52,10 +197,10 @@ def get_stereo_depth(trt_engine, trt_context, left_rgb, right_rgb, intrinsics, b
     trt_tensors = {
         "left_input": left_image_tensor,
         "right_input": right_image_tensor,
-        "disparity": torch.zeros((TRT_BATCH_SIZE, 1, HEIGHT, WIDTH)).cuda().to(torch.float32),
-        "disparity_sparse": torch.zeros((TRT_BATCH_SIZE, 1, HEIGHT, WIDTH)).cuda().to(torch.float32),
-        "disparity_small": torch.zeros((TRT_BATCH_SIZE, 1, HEIGHT//4, WIDTH//4)).cuda().to(torch.float32),
-        "confidence": torch.zeros((TRT_BATCH_SIZE, 1, HEIGHT//4, WIDTH//4)).cuda().to(torch.float32),
+        "disparity": torch.zeros((BATCH_SIZE, 1, HEIGHT, WIDTH)).cuda().to(torch.float32),
+        "disparity_sparse": torch.zeros((BATCH_SIZE, 1, HEIGHT, WIDTH)).cuda().to(torch.float32),
+        "disparity_small": torch.zeros((BATCH_SIZE, 1, HEIGHT//4, WIDTH//4)).cuda().to(torch.float32),
+        "confidence": torch.zeros((BATCH_SIZE, 1, HEIGHT//4, WIDTH//4)).cuda().to(torch.float32),
     }
     trt_buffers = [trt_tensors[trt_engine.get_tensor_name(idx)].data_ptr() for idx in range(trt_engine.num_bindings)]
     trt_context.execute_v2(trt_buffers)
@@ -77,8 +222,7 @@ def load_trt_engine(engine_name):
         trt_context = trt_engine.create_execution_context()
     return trt_engine, trt_context
 
-def get_images(filename, traj, traj_idxs, engine_path):
-    trt_engine, trt_context = load_trt_engine(engine_path)
+def get_images(filename, traj, traj_idxs, model_dict):
     svo_path = os.path.join(filename, "recordings/SVO")
     svo_files = [os.path.join(svo_path, file) for file in os.listdir(svo_path) if file.endswith(".svo")]
     if len(svo_files) == 0:
@@ -119,6 +263,7 @@ def get_images(filename, traj, traj_idxs, engine_path):
 
     for i, cam_id in enumerate(serial_numbers):
         intrinsics = cam_matrices[i]
+        intrinsics_traj =  np.repeat(intrinsics[np.newaxis, :, :], frame_counts[0] - 1, axis=0)
         baseline = cam_baselines[i]
         left_key, right_key = f"{cam_id}_left", f"{cam_id}_right"
 
@@ -140,22 +285,34 @@ def get_images(filename, traj, traj_idxs, engine_path):
         cam_right_rgb_im_traj = cam_right_rgb_im_traj[:, :height, :width, :3]
 
         cam_tri_depth_im = []
-        for k in range(len(cam_left_rgb_im_traj) // TRT_BATCH_SIZE + 1):
-            cam_left_rgb_batch = cam_left_rgb_im_traj[TRT_BATCH_SIZE*k:TRT_BATCH_SIZE*(k+1)]
-            cam_right_rgb_batch = cam_right_rgb_im_traj[TRT_BATCH_SIZE*k:TRT_BATCH_SIZE*(k+1)]
+        for k in range(len(cam_left_rgb_im_traj) // BATCH_SIZE + 1):
+            cam_left_rgb_batch = cam_left_rgb_im_traj[BATCH_SIZE*k:BATCH_SIZE*(k+1)]
+            cam_right_rgb_batch = cam_right_rgb_im_traj[BATCH_SIZE*k:BATCH_SIZE*(k+1)]
+            intrinsics_batch = intrinsics_traj[BATCH_SIZE*k:BATCH_SIZE*(k+1)]
+
             if len(cam_left_rgb_batch) == 0:
                 continue
             if not (cam_left_rgb_batch.shape[1] == HEIGHT and cam_left_rgb_batch.shape[2] == WIDTH):
                 print("SKIPPED: Shape mismatch")
                 return [], [], [], [], [] 
 
-            cam_left_rgb_batch_padded = np.zeros((TRT_BATCH_SIZE, HEIGHT, WIDTH, 3))
+            cam_left_rgb_batch_padded = np.zeros((BATCH_SIZE, HEIGHT, WIDTH, 3))
             cam_left_rgb_batch_padded[:len(cam_left_rgb_batch), :, :, :] = cam_left_rgb_batch
-            cam_right_rgb_batch_padded = np.zeros((TRT_BATCH_SIZE, HEIGHT, WIDTH, 3))
+            cam_right_rgb_batch_padded = np.zeros((BATCH_SIZE, HEIGHT, WIDTH, 3))
             cam_right_rgb_batch_padded[:len(cam_right_rgb_batch), :, :, :] = cam_right_rgb_batch
 
-            tri_depth_im_batch = get_stereo_depth(trt_engine, trt_context, 
-                cam_left_rgb_batch_padded, cam_right_rgb_batch_padded, intrinsics, baseline)[:len(cam_left_rgb_batch)]
+            if USE_TRT_MODEL:
+                tri_depth_im_batch = get_stereo_depth(model_dict["trt_engine"], model_dict["trt_context"], 
+                    cam_left_rgb_batch_padded, cam_right_rgb_batch_padded, intrinsics, baseline)[:len(cam_left_rgb_batch)]
+            else:
+                tri_depth_im_batch, _, _, = model_dict["model"].inference(
+                    rgb_left=format_image(cam_left_rgb_batch),
+                    rgb_right=format_image(cam_right_rgb_batch),
+                    intrinsics=torch.tensor(intrinsics_batch).to(torch.float32).cuda(), 
+                    resize=None,
+                    baseline=baseline
+                )
+                tri_depth_im_batch = tri_depth_im_batch.cpu().detach().numpy()
 
             cam_tri_depth_im.append(tri_depth_im_batch)
 
@@ -203,37 +360,48 @@ def list_directories(root_directory, depth=1):
             del dirnames[:]
     return directories
 
-def get_input_output_paths(r2d2_data_path, save_path):
-    input_traj_paths = sorted(list_directories(r2d2_data_path, depth=5))
+def get_input_output_paths(r2d2_data_path, save_path, prefix):
+    folder_depth = 5 if "r2d2_full" in r2d2_data_path else 2
+    input_traj_paths = sorted(list_directories(r2d2_data_path, depth=folder_depth))
     output_traj_paths = []
     
     for traj_path in input_traj_paths:
-        relative_path = traj_path.split('raw_r2d2_full/', 1)[-1].strip()
-        output_traj_paths.append(os.path.join(save_path, 'raw_r2d2_full/', relative_path))
+        relative_path = traj_path.split(prefix, 1)[-1].strip()
+        output_traj_paths.append(os.path.join(save_path, relative_path))
     return input_traj_paths, output_traj_paths
 
 def main(process_id, num_processes):
     device_name = torch.cuda.get_device_name().replace(" ", "_")
-    print("DEVICE NAME: ", device_name)
-    engine_path = os.path.join("/home/ubuntu/trt_stereo", 
-        "stereo_{}_h{}_w{}_b_{}_d{}__{}.engine".format(VARIANT, HEIGHT, WIDTH, NUM_DISPARITIES, TRT_BATCH_SIZE, device_name))
-    print("ENGINE PATH: ", engine_path)
-    r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
-    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
+    if USE_TRT_MODEL:
+        engine_path = os.path.join("/home/ubuntu/trt_stereo", 
+            "stereo_{}_h{}_w{}_b_{}_d{}__{}.engine".format(VARIANT, HEIGHT, WIDTH, NUM_DISPARITIES, BATCH_SIZE, device_name))
+        trt_engine, trt_context = load_trt_engine(engine_path)
+        model_dict = {"trt_engine": trt_engine, "trt_context": trt_context}
+    else:
+        stereo_ckpt = "/mnt/fsx/ashwinbalakrishna/stereo_20230724.pt"
+        model = StereoModel(stereo_ckpt)
+        model.cuda()
+        model_dict = {"model": model}
+
+    # r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
+    # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
+    r2d2_data_path = "/mnt/fsx/ashwinbalakrishna/datasets/0921"
+    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_TRT"
+    prefix = r2d2_data_path.split("/")[-1] + "/"
     resize_shape = (WIDTH, HEIGHT)
 
     num_samples_per_traj = 32
-    num_trajectories = 1000000
+    num_trajectories = 10
     num_failures = 0
     os.makedirs(save_path, exist_ok=True)
 
-    if os.path.exists('filepaths.pkl'):
-        with open('filepaths.pkl', 'rb') as file:
+    if os.path.exists(os.path.join(save_path, 'filepaths.pkl')):
+        with open(os.path.join(save_path, 'filepaths.pkl'), 'rb') as file:
             path_info = pickle.load(file)
             input_traj_paths, output_traj_paths = path_info["input_paths"], path_info["output_paths"]
     else:
-        input_traj_paths, output_traj_paths = get_input_output_paths(r2d2_data_path, save_path)
-        with open('filepaths.pkl', 'wb') as file:
+        input_traj_paths, output_traj_paths = get_input_output_paths(r2d2_data_path, save_path, prefix=prefix)
+        with open(os.path.join(save_path, 'filepaths.pkl'), 'wb') as file:
             # Dump the object into the pickle file
             pickle.dump({"input_paths": input_traj_paths, "output_paths": output_traj_paths}, file)
     
@@ -244,10 +412,10 @@ def main(process_id, num_processes):
     else:
         failures = {'Missing SVO/H5 File': set(), 'Trajectory Loading Error': set(), 'Trajectory too Long': set(),
                         'Trajectory is Empty': set(), 'Shape Mismatch': set()}
-    
+
     for i, (input_traj_path, output_traj_path) in enumerate(zip(input_traj_paths, output_traj_paths)):
         if i % num_processes == process_id:
-            traj_name = input_traj_path.split("raw_r2d2_full/")[-1]
+            traj_name = input_traj_path.split(prefix)[-1]
             failure = False
             for key in failures:
                 if traj_name in failures[key]:
@@ -291,7 +459,7 @@ def main(process_id, num_processes):
                 continue
             traj_idxs = get_evenly_spaced_samples(idxs, num_samples_per_traj)
 
-            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, cam_matrices = get_images(input_traj_path, traj, traj_idxs, engine_path)
+            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, cam_matrices = get_images(input_traj_path, traj, traj_idxs, model_dict)
             if not len(left_rgb_im_traj):
                 print("SKIPPED: no images in trajectory")
                 failures['Shape Mismatch'].add(traj_name)
@@ -334,7 +502,7 @@ def main(process_id, num_processes):
                 for t in range(left_rgb_im_traj.shape[0]):
                     cv2.imwrite(os.path.join(rgb_left_dir, f"left_rgb_{t:03}.jpg"), cv2.resize(left_rgb_im_traj[t, camera_idx], resize_shape))
                     cv2.imwrite(os.path.join(rgb_right_dir, f"right_rgb_{t:03}.jpg"), cv2.resize(right_rgb_im_traj[t, camera_idx], resize_shape))
-                    cv2.imwrite(os.path.join(depth_dir, f"tri_depth_{t:03}.png"), cv2.resize(tri_depth_im_traj[t, camera_idx], resize_shape))
+                    np.save(os.path.join(depth_dir, f"tri_depth_{t:03}.npy"), cv2.resize(tri_depth_im_traj[t, camera_idx], resize_shape))
 
             print("TIME ELAPSED FINAL: ", time.time() - start_time)
 
