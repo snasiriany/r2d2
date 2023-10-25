@@ -10,7 +10,6 @@ import pickle
 
 import cv2
 import numpy as np
-from tqdm import tqdm
 import fnmatch
 import h5py
 
@@ -160,7 +159,7 @@ class StereoModel(torch.nn.Module):
 
 # Get (RGBD_1, RGBD_2, RGBD_3) for a given trajectory in addition
 # to camera intrinsics information
-def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
+def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=1):
     svo_files = []
     for root, _, files in os.walk(filepath):
         for filename in files:
@@ -238,6 +237,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
             if len(intrinsics_batch) == 0:
                 continue
             H, W = cam_left_rgb_batch.shape[1], cam_left_rgb_batch.shape[2]
+            print("GOT PRE INFERENCE")
             tri_depth_im_batch, disparity_batch, disparity_sparse_batch, cam_left_rgb_resized_batch, cam_right_rgb_resized_batch, resized_intrinsics = model.inference(
                 rgb_left=format_image(cam_left_rgb_batch),
                 rgb_right=format_image(cam_right_rgb_batch),
@@ -245,6 +245,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
                 resize=None,
                 baseline=camera.get_camera_baseline()
             )
+            print("GOT POST INFERENCE")
             cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
             cam_left_rgb_im_traj_resized.append(cam_left_rgb_resized_batch.cpu().detach().numpy())
             cam_right_rgb_im_traj_resized.append(cam_right_rgb_resized_batch.cpu().detach().numpy())
@@ -325,11 +326,11 @@ def get_evenly_spaced_samples(lst, num_samples):
         
 
 if __name__ == "__main__":
-    r2d2_data_path = "/home/ubuntu/local_data/0921"
-    save_path = "/home/ubuntu/local_data/narrow_debugging_old_dataloader_directory"
+    r2d2_data_path = "/mnt/fsx/ashwinbalakrishna/datasets/0921"
+    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_old_dataloader_directory"
     prefix = r2d2_data_path.split("/")[-1] + "/"
     
-    stereo_ckpt = "/home/ubuntu/stereo_20230724.pt"
+    stereo_ckpt = "/mnt/fsx/ashwinbalakrishna/stereo_20230724.pt"
     num_samples_per_traj = 30
     num_trajectories = 10000
     os.makedirs(save_path, exist_ok=True)

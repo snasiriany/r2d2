@@ -2,19 +2,29 @@ import glob
 import json
 import os
 import torch
-import torch.nn.functional as tfn
-import open3d as o3d
 import random
 import time
+import argparse
 import pickle
 
 import cv2
+from PIL import Image
 import numpy as np
-from tqdm import tqdm
 import fnmatch
 import h5py
+import tensorrt as trt
 
 from r2d2.camera_utils.recording_readers.svo_reader import SVOReader
+from r2d2.trajectory_utils.misc import load_trajectory
+
+VARIANT = "base"
+NUM_DISPARITIES = 384
+HEIGHT = 704
+WIDTH = 1280
+MAX_DEPTH = 10
+BATCH_SIZE = 16
+USE_TRT_MODEL = False
+TRT_LOG_LEVEL = trt.Logger.ERROR
 torch._C._jit_set_profiling_executor(False)
 
 """Code copied from:
@@ -238,6 +248,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
             if len(intrinsics_batch) == 0:
                 continue
             H, W = cam_left_rgb_batch.shape[1], cam_left_rgb_batch.shape[2]
+            print("GOT PRE INF")
             tri_depth_im_batch, disparity_batch, disparity_sparse_batch, cam_left_rgb_resized_batch, cam_right_rgb_resized_batch, resized_intrinsics = model.inference(
                 rgb_left=format_image(cam_left_rgb_batch),
                 rgb_right=format_image(cam_right_rgb_batch),
@@ -245,6 +256,7 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
                 resize=None,
                 baseline=camera.get_camera_baseline()
             )
+            print("GOT POST INF")
             cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
             cam_left_rgb_im_traj_resized.append(cam_left_rgb_resized_batch.cpu().detach().numpy())
             cam_right_rgb_im_traj_resized.append(cam_right_rgb_resized_batch.cpu().detach().numpy())
@@ -333,8 +345,8 @@ def main(process_id, num_processes):
 
     # r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
     # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
-    r2d2_data_path = "/home/ubuntu/local_data/0921"
-    save_path = "/home/ubuntu/local_data/narrow_debugging_new_dataloader"
+    r2d2_data_path = "/mnt/fsx/ashwinbalakrishna/datasets/0921"
+    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_old_dataloader_directory_clean"
     prefix = r2d2_data_path.split("/")[-1] + "/"
     resize_shape = (WIDTH, HEIGHT)
 
@@ -407,13 +419,13 @@ def main(process_id, num_processes):
                 continue
             traj_idxs = get_evenly_spaced_samples(idxs, num_samples_per_traj)
 
-            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, cam_matrices = get_images(input_traj_path, traj, traj_idxs, model_dict)
+            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices = get_rgbd_tuples(svo_path, stereo_ckpt)
             if not len(left_rgb_im_traj):
                 print("SKIPPED: no images in trajectory")
                 failures['Shape Mismatch'].add(traj_name)
                 continue
-            combined_extrinsics = get_camera_extrinsics(serial_numbers, traj, traj_idxs)
-            actions = get_actions(traj, traj_idxs)
+            combined_extrinsics = get_camera_extrinsics(h5_path, serial_numbers, frame_count)
+            actions = get_actions(h5_path, frame_count)
 
             if ((combined_extrinsics.shape[0] != left_rgb_im_traj.shape[0]) or \
                 (tri_depth_im_traj.shape[0] != left_rgb_im_traj.shape[0]) or \
