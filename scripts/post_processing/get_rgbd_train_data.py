@@ -21,8 +21,8 @@ NUM_DISPARITIES = 384
 HEIGHT = 704
 WIDTH = 1280
 MAX_DEPTH = 10
-BATCH_SIZE = 32
-USE_TRT_MODEL = True
+BATCH_SIZE = 16
+USE_TRT_MODEL = False
 TRT_LOG_LEVEL = trt.Logger.ERROR
 
 if not USE_TRT_MODEL:
@@ -338,7 +338,6 @@ def get_camera_extrinsics(serial_numbers, traj, traj_idxs):
     combined_extrinsics = np.array([[frame["observation"]["camera_extrinsics"][extrinsics_key] \
                                         for i, frame in enumerate(traj) \
                                         if i in traj_idxs] for extrinsics_key in extrinsics_keys])
-    print(combined_extrinsics.shape)
     return np.swapaxes(np.array(combined_extrinsics), 0, 1)
 
 # Get actions
@@ -385,8 +384,8 @@ def main(process_id, num_processes):
 
     # r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
     # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
-    r2d2_data_path = "/mnt/fsx/ashwinbalakrishna/datasets/0921"
-    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_TRT"
+    r2d2_data_path = "/home/ubuntu/local_data/0921"
+    save_path = "/home/ubuntu/local_data/narrow_debugging_new_dataloader"
     prefix = r2d2_data_path.split("/")[-1] + "/"
     resize_shape = (WIDTH, HEIGHT)
 
@@ -490,6 +489,8 @@ def main(process_id, num_processes):
         
             images_dir = os.path.join(output_traj_path, "images")
             os.makedirs(images_dir, exist_ok=True)
+
+            print("TRI DEPTH: ", tri_depth_im_traj.shape)
 
             for camera_idx in range(left_rgb_im_traj.shape[1]):
                 rgb_left_dir = os.path.join(images_dir, "left_rgb", f"camera_{camera_idx}")

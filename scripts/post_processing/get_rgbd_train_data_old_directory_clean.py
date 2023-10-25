@@ -6,6 +6,7 @@ import torch.nn.functional as tfn
 import open3d as o3d
 import random
 import time
+import pickle
 
 import cv2
 import numpy as np
@@ -217,9 +218,6 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
             cam_right_rgb_im_traj.append(rgb_im_right)
         cam_left_rgb_im_traj = np.array(cam_left_rgb_im_traj)
         cam_right_rgb_im_traj = np.array(cam_right_rgb_im_traj)
-        print("SHAPES")
-        print(cam_left_rgb_im_traj.shape)
-        print(cam_right_rgb_im_traj.shape)
 
         model = StereoModel(stereo_ckpt)
         model.cuda()
@@ -277,9 +275,8 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
 
 # Get camera extrinsics
 def get_camera_extrinsics(filepath, serial_numbers, frame_count):
-    filename = os.path.join(filepath, "trajectory.h5")
     # Get extrinsics for the trajectory
-    with h5py.File(filename, "r") as f:
+    with h5py.File(filepath, "r") as f:
         extrinsics_trajs = []
         for _, serial_num in enumerate(serial_numbers):
             extrinsics_key = str(serial_num) + "_left"
@@ -289,52 +286,185 @@ def get_camera_extrinsics(filepath, serial_numbers, frame_count):
 
 # Get actions
 def get_actions(filepath, frame_count):
-    filename = os.path.join(filepath, "trajectory.h5")
-    with h5py.File(filename, "r") as f:
+    with h5py.File(filepath, "r") as f:
         cartesian_position = f["/action/cartesian_position"][:]
         gripper_position = f["/action/gripper_position"][:]
         gripper_position = np.expand_dims(gripper_position, -1)
         actions = np.concatenate((cartesian_position, gripper_position), axis=-1)[:frame_count-1]
     return actions
+
+def list_directories(root_directory, depth=1):
+    if depth == 0:
+        return []
+    
+    directories = []
+    for dirpath, dirnames, filenames in os.walk(root_directory):
+        if dirpath != root_directory and len(dirpath.split(os.sep)) - root_directory.count(os.sep) == depth:
+            directories.append(dirpath)
+        if len(dirpath.split(os.sep)) - root_directory.count(os.sep) > depth:
+            del dirnames[:]
+    return directories
+
+def get_input_output_paths(r2d2_data_path, save_path, prefix):
+    folder_depth = 5 if "r2d2_full" in r2d2_data_path else 2
+    input_traj_paths = sorted(list_directories(r2d2_data_path, depth=folder_depth))
+    output_traj_paths = []
+    
+    for traj_path in input_traj_paths:
+        relative_path = traj_path.split(prefix, 1)[-1].strip()
+        output_traj_paths.append(os.path.join(save_path, relative_path))
+    return input_traj_paths, output_traj_paths
+
+# Function to get evenly spaced samples with first and last included
+def get_evenly_spaced_samples(lst, num_samples):
+    if num_samples <= 2:
+        return lst[:num_samples]  # Return the first num_samples if num_samples <= 2
+    else:
+        step = (len(lst) - 1) / (num_samples - 1)  # Calculate step size
+        return [lst[int(i * step)] for i in range(num_samples)]  # Generate samples
         
 
-if __name__ == "__main__":
+def main(process_id, num_processes):
+    device_name = torch.cuda.get_device_name().replace(" ", "_")
+    stereo_ckpt = "/mnt/fsx/ashwinbalakrishna/stereo_20230724.pt"
+    model = StereoModel(stereo_ckpt)
+    model.cuda()
+    model_dict = {"model": model}
+
+    # r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
+    # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
     r2d2_data_path = "/home/ubuntu/local_data/0921"
-    save_path = "/home/ubuntu/local_data/narrow_debugging_old_dataloader"
-    stereo_ckpt = "/home/ubuntu/stereo_20230724.pt"
-    num_samples_per_traj = 30
-    num_trajectories = 1
+    save_path = "/home/ubuntu/local_data/narrow_debugging_new_dataloader"
+    prefix = r2d2_data_path.split("/")[-1] + "/"
+    resize_shape = (WIDTH, HEIGHT)
 
-    hf = h5py.File(os.path.join(save_path, 'rgbd_train_data_fix_scaling_mini.h5'), 'a')
+    num_samples_per_traj = 32
+    num_trajectories = 10
+    num_failures = 0
+    os.makedirs(save_path, exist_ok=True)
 
-    for i, traj_name in enumerate(sorted(os.listdir(r2d2_data_path))):
-        print("I: ", i, "TRAJ NAME: ", traj_name)
-        if traj_name in hf:
-            print("SKIPPED!")
-            continue
-        start_time = time.time()
-        if i > num_trajectories: 
-            break
-        traj_path = os.path.join(r2d2_data_path, traj_name)
-        svo_path = os.path.join(traj_path, 'recordings/SVO')
+    if os.path.exists(os.path.join(save_path, 'filepaths.pkl')):
+        with open(os.path.join(save_path, 'filepaths.pkl'), 'rb') as file:
+            path_info = pickle.load(file)
+            input_traj_paths, output_traj_paths = path_info["input_paths"], path_info["output_paths"]
+    else:
+        input_traj_paths, output_traj_paths = get_input_output_paths(r2d2_data_path, save_path, prefix=prefix)
+        with open(os.path.join(save_path, 'filepaths.pkl'), 'wb') as file:
+            # Dump the object into the pickle file
+            pickle.dump({"input_paths": input_traj_paths, "output_paths": output_traj_paths}, file)
+    
+    if os.path.exists(os.path.join(save_path, 'failures.pkl')):
+        with open(os.path.join(save_path, 'failures.pkl'), 'rb') as file:
+            # Load the object from the pickle file
+            failures = pickle.load(file)
+    else:
+        failures = {'Missing SVO/H5 File': set(), 'Trajectory Loading Error': set(), 'Trajectory too Long': set(),
+                        'Trajectory is Empty': set(), 'Shape Mismatch': set()}
 
-        left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices = get_rgbd_tuples(svo_path, stereo_ckpt)
-        if not len(left_rgb_im_traj):
-            continue
-        combined_extrinsics = get_camera_extrinsics(traj_path, serial_numbers, frame_count)
-        actions = get_actions(traj_path, frame_count)
+    for i, (input_traj_path, output_traj_path) in enumerate(zip(input_traj_paths, output_traj_paths)):
+        if i % num_processes == process_id:
+            traj_name = input_traj_path.split(prefix)[-1]
+            failure = False
+            for key in failures:
+                if traj_name in failures[key]:
+                    print("SKIPPED: ALREADY MARKED AS A FAILURE")
+                    failure = True
+            if failure:
+                num_failures += 1
+                continue
+            print("INPUT TRAJ PATH: ",  input_traj_path)
+            print("OUTPUT TRAJ PATH: ", output_traj_path)
+            print("I: ", i, "TRAJ NAME: ", traj_name)
+            if os.path.exists(os.path.join(output_traj_path, 'low_dim_info.npz')) and os.path.exists(os.path.join(output_traj_path, 'images')):
+                print("SKIPPED: this trajectory has already been processed")
+                continue
+            start_time = time.time()
+            if i > num_trajectories: 
+                break
 
-        assert(combined_extrinsics.shape[0] == left_rgb_im_traj.shape[0])
-        assert(tri_depth_im_traj.shape[0] == left_rgb_im_traj.shape[0])
-        assert(actions.shape[0] == left_rgb_im_traj.shape[0])
-        assert(right_rgb_im_traj.shape[0] == left_rgb_im_traj.shape[0])
+            h5_path = os.path.join(input_traj_path, "trajectory.h5")
+            svo_path = os.path.join(input_traj_path, "recordings/SVO")
+            if not (os.path.exists(svo_path) and os.path.exists(h5_path)):
+                print("SKIPPED: missing SVO or H5 file")
+                failures['Missing SVO/H5 File'].add(traj_name)
+                continue
+            try:
+                traj = load_trajectory(h5_path, recording_folderpath=svo_path)
+            except:
+                print("SKIPPED: could not load trajectory")
+                failures['Trajectory Loading Error'].add(traj_name)
+                continue
+            if traj is None:
+                print("SKIPPED: trajectory was too long")
+                failures['Trajectory too Long'].add(traj_name)
+                continue
 
-        print("TRI DEPTH: ", tri_depth_im_traj.shape)
-        traj_group = hf.require_group(traj_name)
-        traj_group.create_dataset("left_rgb_im_traj", data=left_rgb_im_traj.astype(np.uint8))
-        traj_group.create_dataset("right_rgb_im_traj", data=right_rgb_im_traj.astype(np.uint8))
-        traj_group.create_dataset("tri_depth_im_traj", data=tri_depth_im_traj)
-        traj_group.create_dataset("actions", data=actions)
-        traj_group.create_dataset("extrinsics_traj", data=combined_extrinsics)
-        traj_group.create_dataset("camera_matrices", data=cam_matrices)
-        print("TIME ELAPSED: ", time.time() - start_time)
+            # Get evenly spaced ids in a trajectory
+            idxs = list(range(len(traj)))
+            if not len(traj):
+                print("SKIPPED: no items in trajectory")
+                failures['Trajectory is Empty'].add(traj_name)
+                continue
+            traj_idxs = get_evenly_spaced_samples(idxs, num_samples_per_traj)
+
+            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, cam_matrices = get_images(input_traj_path, traj, traj_idxs, model_dict)
+            if not len(left_rgb_im_traj):
+                print("SKIPPED: no images in trajectory")
+                failures['Shape Mismatch'].add(traj_name)
+                continue
+            combined_extrinsics = get_camera_extrinsics(serial_numbers, traj, traj_idxs)
+            actions = get_actions(traj, traj_idxs)
+
+            if ((combined_extrinsics.shape[0] != left_rgb_im_traj.shape[0]) or \
+                (tri_depth_im_traj.shape[0] != left_rgb_im_traj.shape[0]) or \
+                (actions.shape[0] != left_rgb_im_traj.shape[0]) or \
+                (right_rgb_im_traj.shape[0] != left_rgb_im_traj.shape[0]) or \
+                (left_rgb_im_traj.shape[1] != right_rgb_im_traj.shape[1]) or \
+                (left_rgb_im_traj.shape[1] != tri_depth_im_traj.shape[1]) or \
+                (left_rgb_im_traj.shape[1] != 3)):
+                print("SKIPPED: the shapes don't make sense!")
+                failures['Shape Mismatch'].add(traj_name)
+                continue
+
+            print("TIME ELAPSED: ", time.time() - start_time)
+            os.makedirs(output_traj_path, exist_ok=True)
+            np.savez(os.path.join(output_traj_path, 'low_dim_info.npz'), actions=actions, extrinsics_traj=combined_extrinsics, camera_matrices=cam_matrices, traj_idxs=np.array(traj_idxs))
+
+            left_rgb_im_traj = left_rgb_im_traj.astype(np.uint8)
+            right_rgb_im_traj = right_rgb_im_traj.astype(np.uint8)
+            # tri_depth_im_traj = np.clip(tri_depth_im_traj, 0, MAX_DEPTH)
+            # tri_depth_im_traj = (tri_depth_im_traj / MAX_DEPTH) * 255
+            # tri_depth_im_traj = tri_depth_im_traj.astype(np.uint8)
+        
+            images_dir = os.path.join(output_traj_path, "images")
+            os.makedirs(images_dir, exist_ok=True)
+
+            print("TRI DEPTH: ", tri_depth_im_traj.shape)
+
+            for camera_idx in range(left_rgb_im_traj.shape[1]):
+                rgb_left_dir = os.path.join(images_dir, "left_rgb", f"camera_{camera_idx}")
+                rgb_right_dir = os.path.join(images_dir, "right_rgb", f"camera_{camera_idx}")
+                depth_dir = os.path.join(images_dir, "tri_depth", f"camera_{camera_idx}")
+                os.makedirs(rgb_right_dir, exist_ok=True)
+                os.makedirs(rgb_left_dir, exist_ok=True)
+                os.makedirs(depth_dir, exist_ok=True)
+
+                for t in range(left_rgb_im_traj.shape[0]):
+                    cv2.imwrite(os.path.join(rgb_left_dir, f"left_rgb_{t:03}.jpg"), cv2.resize(left_rgb_im_traj[t, camera_idx], resize_shape))
+                    cv2.imwrite(os.path.join(rgb_right_dir, f"right_rgb_{t:03}.jpg"), cv2.resize(right_rgb_im_traj[t, camera_idx], resize_shape))
+                    np.save(os.path.join(depth_dir, f"tri_depth_{t:03}.npy"), cv2.resize(tri_depth_im_traj[t, camera_idx], resize_shape))
+
+            print("TIME ELAPSED FINAL: ", time.time() - start_time)
+
+    print("NUM FAILURES: ", num_failures)
+    # Open the pickle file in binary write mode
+    with open(os.path.join(save_path, 'failures.pkl'), 'wb') as file:
+        # Dump the object into the pickle file
+        pickle.dump(failures, file)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--process_id', type=int, default=0)
+    parser.add_argument('--num_processes', type=int, default=1)
+    args = parser.parse_args()
+    main(args.process_id, args.num_processes)
