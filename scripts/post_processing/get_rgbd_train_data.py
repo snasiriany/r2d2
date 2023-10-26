@@ -21,8 +21,8 @@ NUM_DISPARITIES = 384
 HEIGHT = 704
 WIDTH = 1280
 MAX_DEPTH = 10
-BATCH_SIZE = 16
-USE_TRT_MODEL = False
+BATCH_SIZE = 32
+USE_TRT_MODEL = True
 TRT_LOG_LEVEL = trt.Logger.ERROR
 
 if not USE_TRT_MODEL:
@@ -250,6 +250,7 @@ def get_images(filename, traj, traj_idxs, model_dict):
         camera.disable_camera()
 
     cam_matrices = [x for y, x in sorted(zip(serial_numbers, cam_matrices))]
+    cam_baselines = [x for y, x in sorted(zip(serial_numbers, cam_baselines))]
     serial_numbers = sorted(serial_numbers)
 
     if frame_counts.count(frame_counts[0]) != len(frame_counts):
@@ -384,8 +385,8 @@ def main(process_id, num_processes):
 
     # r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
     # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
-    r2d2_data_path = "/home/ubuntu/local_data/0921"
-    save_path = "/home/ubuntu/local_data/narrow_debugging_new_dataloader"
+    r2d2_data_path = "/mnt/fsx/ashwinbalakrishna/datasets/0921"
+    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_full_fix_TRT"
     prefix = r2d2_data_path.split("/")[-1] + "/"
     resize_shape = (WIDTH, HEIGHT)
 
@@ -489,8 +490,6 @@ def main(process_id, num_processes):
         
             images_dir = os.path.join(output_traj_path, "images")
             os.makedirs(images_dir, exist_ok=True)
-
-            print("TRI DEPTH: ", tri_depth_im_traj.shape)
 
             for camera_idx in range(left_rgb_im_traj.shape[1]):
                 rgb_left_dir = os.path.join(images_dir, "left_rgb", f"camera_{camera_idx}")

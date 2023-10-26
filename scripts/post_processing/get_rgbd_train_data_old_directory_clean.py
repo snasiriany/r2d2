@@ -22,8 +22,8 @@ NUM_DISPARITIES = 384
 HEIGHT = 704
 WIDTH = 1280
 MAX_DEPTH = 10
-BATCH_SIZE = 32
-USE_TRT_MODEL = True
+BATCH_SIZE = 16
+USE_TRT_MODEL = False
 TRT_LOG_LEVEL = trt.Logger.ERROR
 
 if not USE_TRT_MODEL:
@@ -205,16 +205,12 @@ class StereoModel(torch.nn.Module):
 
         return depth, output["disparity"], disparity_sparse, rgb_left, rgb_right, intrinsics
 
-# Get (RGBD_1, RGBD_2, RGBD_3) for a given trajectory in addition
-# to camera intrinsics information
-def get_rgbd_tuples(filepath, model_dict, num_samples_per_traj):
-    svo_files = []
-    for root, _, files in os.walk(filepath):
-        for filename in files:
-            if fnmatch.fnmatch(filename, "*.svo"):
-                svo_files.append(os.path.join(root, filename))
+
+def get_images(svo_path, model_dict, num_samples_per_traj):
+    svo_files = [os.path.join(svo_path, file) for file in os.listdir(svo_path) if file.endswith(".svo")]
     if len(svo_files) == 0:
-        return [], [], [], [], [], []
+        print("SKIPPED: not enough SVO files!")
+        return [], [], [], [], [], [], []
 
     cameras = []
     frame_counts = []
@@ -236,12 +232,13 @@ def get_rgbd_tuples(filepath, model_dict, num_samples_per_traj):
         frame_counts.append(frame_count)
         serial_numbers.append(serial_number)
 
-    # return serial_numbers
     cameras = [x for y, x in sorted(zip(serial_numbers, cameras))]
     cam_matrices = [x for y, x in sorted(zip(serial_numbers, cam_matrices))]
+    cam_baselines = [x for y, x in sorted(zip(serial_numbers, cam_baselines))]
     serial_numbers = sorted(serial_numbers)
 
-    assert frame_counts.count(frame_counts[0]) == len(frame_counts)
+    if frame_counts.count(frame_counts[0]) != len(frame_counts):
+        return [], [], [], [], [], [], []
     
     left_rgb_im_traj = []
     right_rgb_im_traj = []
@@ -295,7 +292,7 @@ def get_rgbd_tuples(filepath, model_dict, num_samples_per_traj):
                 continue
             if not (cam_left_rgb_batch.shape[1] == HEIGHT and cam_left_rgb_batch.shape[2] == WIDTH):
                 print("SKIPPED: Shape mismatch")
-                return [], [], [], [], [], [] 
+                return [], [], [], [], [], [], []
 
             cam_left_rgb_batch_padded = np.zeros((BATCH_SIZE, HEIGHT, WIDTH, 3))
             cam_left_rgb_batch_padded[:len(cam_left_rgb_batch), :, :, :] = cam_left_rgb_batch
@@ -459,7 +456,7 @@ def main(process_id, num_processes):
                 failures['Missing SVO/H5 File'].add(traj_name)
                 continue
 
-            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, traj_idxs = get_rgbd_tuples(svo_path, model_dict, num_samples_per_traj)
+            left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices, traj_idxs = get_images(svo_path, model_dict, num_samples_per_traj)
             if not len(left_rgb_im_traj):
                 print("SKIPPED: no images in trajectory")
                 failures['Shape Mismatch'].add(traj_name)
@@ -468,9 +465,6 @@ def main(process_id, num_processes):
             actions = get_actions(h5_path, frame_count)
             combined_extrinsics = combined_extrinsics[traj_idxs]
             actions = actions[traj_idxs]
-            # left_rgb_im_traj = left_rgb_im_traj[traj_idxs]
-            # right_rgb_im_traj = right_rgb_im_traj[traj_idxs]
-            # tri_depth_im_traj = tri_depth_im_traj[traj_idxs]
 
             if ((combined_extrinsics.shape[0] != left_rgb_im_traj.shape[0]) or \
                 (tri_depth_im_traj.shape[0] != left_rgb_im_traj.shape[0]) or \

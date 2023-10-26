@@ -159,7 +159,7 @@ class StereoModel(torch.nn.Module):
 
 # Get (RGBD_1, RGBD_2, RGBD_3) for a given trajectory in addition
 # to camera intrinsics information
-def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=1):
+def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=16):
     svo_files = []
     for root, _, files in os.walk(filepath):
         for filename in files:
@@ -227,16 +227,25 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=1):
         cam_left_rgb_im_traj = cam_left_rgb_im_traj[:, :height, :width, :3]
         cam_right_rgb_im_traj = cam_right_rgb_im_traj[:, :height, :width, :3]
 
+        print("CAM LEFT MAX: ", np.mean(cam_left_rgb_im_traj))
+        print("CAM RIGHT MAX: ", np.mean(cam_right_rgb_im_traj))
+        # assert(False)
+
         cam_tri_depth_im = []
         cam_left_rgb_im_traj_resized = []
         cam_right_rgb_im_traj_resized = []
         for k in range(len(cam_left_rgb_im_traj) // batch_size + 1):
             cam_left_rgb_batch = cam_left_rgb_im_traj[batch_size*k:batch_size*(k+1)]
             cam_right_rgb_batch = cam_right_rgb_im_traj[batch_size*k:batch_size*(k+1)]
+
+            print("CAM LEFT RGB BATCH: ", np.mean(cam_left_rgb_batch))
+            print("CAM RIGHT RGB BATCH: ", np.mean(cam_right_rgb_batch))
+
             intrinsics_batch = intrinsics[batch_size*k:batch_size*(k+1)]
             if len(intrinsics_batch) == 0:
                 continue
             H, W = cam_left_rgb_batch.shape[1], cam_left_rgb_batch.shape[2]
+            print("BASELINE: ", camera.get_camera_baseline())
             tri_depth_im_batch, disparity_batch, disparity_sparse_batch, cam_left_rgb_resized_batch, cam_right_rgb_resized_batch, resized_intrinsics = model.inference(
                 rgb_left=format_image(cam_left_rgb_batch),
                 rgb_right=format_image(cam_right_rgb_batch),
@@ -244,7 +253,10 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=1):
                 resize=None,
                 baseline=camera.get_camera_baseline()
             )
-            cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
+            tri_depth_im_batch = tri_depth_im_batch.cpu().detach().numpy()
+            print("TRI DEPTH IM BATCH: ", np.mean(tri_depth_im_batch))
+            assert(False)
+            cam_tri_depth_im.append(tri_depth_im_batch)
             cam_left_rgb_im_traj_resized.append(cam_left_rgb_resized_batch.cpu().detach().numpy())
             cam_right_rgb_im_traj_resized.append(cam_right_rgb_resized_batch.cpu().detach().numpy())
         
@@ -355,14 +367,17 @@ if __name__ == "__main__":
         print("INPUT TRAJ PATH: ",  input_traj_path)
         print("OUTPUT TRAJ PATH: ", output_traj_path)
 
-        if os.path.exists(os.path.join(output_traj_path, 'low_dim_info.npz')) and os.path.exists(os.path.join(output_traj_path, 'images')):
-            print("SKIPPED: this trajectory has already been processed")
-            continue
+        # if os.path.exists(os.path.join(output_traj_path, 'low_dim_info.npz')) and os.path.exists(os.path.join(output_traj_path, 'images')):
+        #     print("SKIPPED: this trajectory has already been processed")
+        #     continue
 
         h5_path = os.path.join(input_traj_path, "trajectory.h5")
         svo_path = os.path.join(input_traj_path, "recordings/SVO")
 
         left_rgb_im_traj, right_rgb_im_traj, tri_depth_im_traj, serial_numbers, frame_count, cam_matrices = get_rgbd_tuples(svo_path, stereo_ckpt)
+        print("TRI DEPTH IM TRAJ SHAPE: ", tri_depth_im_traj[0][0].shape)
+        print("TRI DEPTH IM TRAJ MAX: ", np.max(tri_depth_im_traj[0][0]))
+        assert(False)
         if not len(left_rgb_im_traj):
             continue
 
