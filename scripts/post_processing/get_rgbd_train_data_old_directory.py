@@ -237,7 +237,6 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=1):
             if len(intrinsics_batch) == 0:
                 continue
             H, W = cam_left_rgb_batch.shape[1], cam_left_rgb_batch.shape[2]
-            print("GOT PRE INFERENCE")
             tri_depth_im_batch, disparity_batch, disparity_sparse_batch, cam_left_rgb_resized_batch, cam_right_rgb_resized_batch, resized_intrinsics = model.inference(
                 rgb_left=format_image(cam_left_rgb_batch),
                 rgb_right=format_image(cam_right_rgb_batch),
@@ -245,7 +244,6 @@ def get_rgbd_tuples(filepath, stereo_ckpt, batch_size=1):
                 resize=None,
                 baseline=camera.get_camera_baseline()
             )
-            print("GOT POST INFERENCE")
             cam_tri_depth_im.append(tri_depth_im_batch.cpu().detach().numpy())
             cam_left_rgb_im_traj_resized.append(cam_left_rgb_resized_batch.cpu().detach().numpy())
             cam_right_rgb_im_traj_resized.append(cam_right_rgb_resized_batch.cpu().detach().numpy())
