@@ -21,8 +21,8 @@ NUM_DISPARITIES = 384
 HEIGHT = 704
 WIDTH = 1280
 MAX_DEPTH = 10
-BATCH_SIZE = 32
-USE_TRT_MODEL = True
+BATCH_SIZE = 16
+USE_TRT_MODEL = False
 TRT_LOG_LEVEL = trt.Logger.ERROR
 
 if not USE_TRT_MODEL:
@@ -264,7 +264,6 @@ def get_images(filename, traj, traj_idxs, model_dict):
 
     for i, cam_id in enumerate(serial_numbers):
         intrinsics = cam_matrices[i]
-        intrinsics_traj =  np.repeat(intrinsics[np.newaxis, :, :], frame_counts[0] - 1, axis=0)
         baseline = cam_baselines[i]
         left_key, right_key = f"{cam_id}_left", f"{cam_id}_right"
 
@@ -284,13 +283,13 @@ def get_images(filename, traj, traj_idxs, model_dict):
         width = width - width % 32
         cam_left_rgb_im_traj = cam_left_rgb_im_traj[:, :height, :width, :3]
         cam_right_rgb_im_traj = cam_right_rgb_im_traj[:, :height, :width, :3]
+        intrinsics_traj =  np.repeat(intrinsics[np.newaxis, :, :], cam_left_rgb_im_traj.shape[0], axis=0)
 
         cam_tri_depth_im = []
         for k in range(len(cam_left_rgb_im_traj) // BATCH_SIZE + 1):
             cam_left_rgb_batch = cam_left_rgb_im_traj[BATCH_SIZE*k:BATCH_SIZE*(k+1)]
             cam_right_rgb_batch = cam_right_rgb_im_traj[BATCH_SIZE*k:BATCH_SIZE*(k+1)]
             intrinsics_batch = intrinsics_traj[BATCH_SIZE*k:BATCH_SIZE*(k+1)]
-
             if len(cam_left_rgb_batch) == 0:
                 continue
             if not (cam_left_rgb_batch.shape[1] == HEIGHT and cam_left_rgb_batch.shape[2] == WIDTH):
@@ -373,7 +372,7 @@ def get_input_output_paths(r2d2_data_path, save_path, prefix):
 def main(process_id, num_processes):
     device_name = torch.cuda.get_device_name().replace(" ", "_")
     if USE_TRT_MODEL:
-        engine_path = os.path.join("/home/ubuntu/trt_stereo", 
+        engine_path = os.path.join("/mnt/fsx/ashwinbalakrishna/trt_stereo", 
             "stereo_{}_h{}_w{}_b_{}_d{}__{}.engine".format(VARIANT, HEIGHT, WIDTH, NUM_DISPARITIES, BATCH_SIZE, device_name))
         trt_engine, trt_context = load_trt_engine(engine_path)
         model_dict = {"trt_engine": trt_engine, "trt_context": trt_context}
@@ -385,13 +384,15 @@ def main(process_id, num_processes):
 
     # r2d2_data_path = "/mnt/fsx/surajnair/datasets/raw_r2d2_full"
     # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/define_train_data/r2d2_all"
-    r2d2_data_path = "/mnt/fsx/ashwinbalakrishna/datasets/0921"
-    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_full_fix_TRT"
+    r2d2_data_path = "/mnt/fsx/surajnair/datasets/r2d2_full_raw"
+    save_path = "/mnt/fsx/ashwinbalakrishna/datasets/full_r2d2_define"
+    # r2d2_data_path = "/mnt/fsx/surajnair/datasets/r2d2_penincup/0921_cam_2"
+    # save_path = "/mnt/fsx/ashwinbalakrishna/datasets/narrow_debugging_noTRT"
     prefix = r2d2_data_path.split("/")[-1] + "/"
     resize_shape = (WIDTH, HEIGHT)
 
     num_samples_per_traj = 32
-    num_trajectories = 10
+    num_trajectories = 100000000
     num_failures = 0
     os.makedirs(save_path, exist_ok=True)
 
@@ -505,6 +506,13 @@ def main(process_id, num_processes):
                     np.save(os.path.join(depth_dir, f"tri_depth_{t:03}.npy"), cv2.resize(tri_depth_im_traj[t, camera_idx], resize_shape))
 
             print("TIME ELAPSED FINAL: ", time.time() - start_time)
+
+        if i % 1000 == 0:
+            print("NUM FAILURES: ", num_failures)
+            # Open the pickle file in binary write mode
+            with open(os.path.join(save_path, 'failures.pkl'), 'wb') as file:
+                # Dump the object into the pickle file
+                pickle.dump(failures, file)    
 
     print("NUM FAILURES: ", num_failures)
     # Open the pickle file in binary write mode
