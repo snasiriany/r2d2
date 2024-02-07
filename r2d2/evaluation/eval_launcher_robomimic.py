@@ -61,6 +61,7 @@ def eval_launcher(variant, run_id, exp_id):
     # config["train"]["data_test"] = config["train"]["data_prior"][:3]
     # ckpt_dict["config"] = json.dumps(config)
 
+    """
     ### set up the test tasks ###
     DATASETS = OrderedDict()
     DATASETS["t2c-cans"] = dict(include_list=[{"env": "pnp-table-to-cab-cans"}])
@@ -99,6 +100,7 @@ def eval_launcher(variant, run_id, exp_id):
         config["train"]["data_test"] = ds
         config["train"]["data_prior"] = None
         config["train"]["data"] = ds
+    """
 
     ckpt_dict["config"] = json.dumps(config)
     policy, _ = FileUtils.policy_from_checkpoint(ckpt_dict=ckpt_dict, device=device, verbose=True)
