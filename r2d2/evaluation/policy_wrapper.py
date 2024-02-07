@@ -101,11 +101,21 @@ class PolicyWrapperRobomimic:
         im2 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][3] #observation["image"]["25047636_left"],
         im3 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][0] #observation["image"]["25047636_left"],
 
+        import robomimic.utils.torch_utils as TorchUtils
+        cartesian_position = np.array(observation["robot_state"]["cartesian_position"])
+        eef_pos = cartesian_position[:,0:3].astype(np.float64)
+        eef_euler = cartesian_position[:,3:6].astype(np.float64)
+        eef_euler = torch.from_numpy(eef_euler)
+        eef_quat = TorchUtils.euler_angles_to_quat(eef_euler)
+        eef_quat = eef_quat.numpy().astype(np.float64)
+        
         obs = {
-            "robot_state/cartesian_position": np.array(observation["robot_state"]["cartesian_position"]),
+            "robot_state/cartesian_position": cartesian_position,
+            "robot_state/eef_pos": eef_pos,
+            "robot_state/eef_quat": eef_quat,
             "robot_state/gripper_position": np.array([observation["robot_state"]["gripper_position"]]),
             "camera/image/hand_camera_image": im1,
-            # "camera/image/varied_camera_left_image": im2,
+            "camera/image/varied_camera_left_image": im2,
             "camera/image/varied_camera_right_image": im3,
         }
         
