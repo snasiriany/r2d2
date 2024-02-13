@@ -91,6 +91,7 @@ REGISTERED_MEMBERS: Dict[str, Dict[str, str]] = {
     "RPL": {
         "Abhiram Maddukuri": "cb4f6842",
         "Soroush Nasiriany": "38ccaeb7",
+        "Shivin Dass": "32cba90c",
     }
 }
 validate_user2id(REGISTERED_MEMBERS)
@@ -103,6 +104,7 @@ REGISTERED_ALIASES: Dict[str, Tuple[str, str]] = {
     # Note: Add duplicates/typos below (follow format)!
     **{
         "Sasha Khazatsky": ("IRIS", "Alexander Khazatsky"),
+        "Shivin Dass & Jiaheng Hu": ("RPL", "Shivin Dass"),
     }
 }
 # fmt: on

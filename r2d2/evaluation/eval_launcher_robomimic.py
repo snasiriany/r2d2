@@ -15,7 +15,7 @@ import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.torch_utils as TorchUtils
 import robomimic.utils.tensor_utils as TensorUtils
 
-from robomimic.scripts.config_gen.helper import get_r2d2_datasets
+# from robomimic.scripts.config_gen.helper import get_r2d2_datasets
 
 
 def eval_launcher(variant, run_id, exp_id):
@@ -52,7 +52,9 @@ def eval_launcher(variant, run_id, exp_id):
     config = json.loads(ckpt_dict["config"])
 
     ### infer image size ###
-    imsize = ckpt_dict["shape_metadata"]["all_shapes"]["camera/image/hand_camera_image"][2]
+    print(ckpt_dict["shape_metadata"]["all_shapes"].keys())
+    imsize = 128 #ckpt_dict["shape_metadata"]["all_shapes"]["camera/image/varied_camera_1_left_image"][2]
+    print(imsize)
 
     ### custom code for loading bc_ret ckpt ###
     # ISL_CKPT_PATH = "~/expdata/r2d2/im/isl/05-28-t2c-cans/ds_pnp-t2c-cans-84/2023-05-28-19-51-46/models/model_epoch_10.pth"

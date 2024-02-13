@@ -4,7 +4,8 @@ from collections import deque
 import time
 
 from r2d2.data_processing.timestep_processing import TimestepProcesser
-
+from robomimic.utils.lang_utils import LangEncoder
+import cv2 
 
 def converter_helper(data, batchify=True):
     if torch.is_tensor(data):
@@ -74,6 +75,8 @@ class PolicyWrapperRobomimic:
         self.fs_wrapper = FrameStackWrapper(num_frames=10)
         self.fs_wrapper.reset()
         self.policy.start_episode()
+        self.lang_encoder = LangEncoder(device=torch.device("cpu"))
+        self.lang_emb = self.lang_encoder.get_lang_emb("pick the can from the counter and place it in the sink")
 
         # if eval_mode:
         #     self.policy.eval()
@@ -92,32 +95,62 @@ class PolicyWrapperRobomimic:
     def forward(self, observation):
         t1 = time.time()
         timestep = {"observation": observation}
+        # print(type(observation))
+        # print(observation["image"].keys())
+        # print(observation["camera_type"])
+        # cv2.imwrite("handcam0.jpg", observation["image"]["hand_camera"][0])
+        # cv2.imwrite("handcam1.jpg", observation["image"]["hand_camera"][1])
+        # cv2.imwrite("variedcam0.jpg", observation["image"]["varied_camera"][0])
+        # cv2.imwrite("variedcam1.jpg", observation["image"]["varied_camera"][1])
+        # cv2.imwrite("variedcam2.jpg", observation["image"]["varied_camera"][2])
+        # cv2.imwrite("variedcam3.jpg", observation["image"]["varied_camera"][3])
         processed_timestep = self.timestep_processor.forward(timestep)
         # torch_timestep = np_dict_to_torch_dict(processed_timestep)
         # print("obs process time1:", time.time() - t1)
 
         t2 = time.time()
-        im1 = processed_timestep["observation"]["camera"]["image"]["hand_camera"][0] #observation["image"]["25047636_left"],
-        im2 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][3] #observation["image"]["25047636_left"],
+
+        im1 = processed_timestep["observation"]["camera"]["image"]["hand_camera"][1] #observation["image"]["25047636_left"],
+        #switch these back
+        im2 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][2] #observation["image"]["25047636_left"],
         im3 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][0] #observation["image"]["25047636_left"],
+        # print(type(im1))
+        # print(im1)
+
+        #varied camera 2 and 3 are the left cameras
+
+        # cv2.imwrite("handcam0.jpg", processed_timestep["observation"]["camera"]["image"]["hand_camera"][0])
+        # cv2.imwrite("handcam1.jpg", processed_timestep["observation"]["camera"]["image"]["hand_camera"][1])
+        # cv2.imwrite("variedcam0.jpg", processed_timestep["observation"]["camera"]["image"]["varied_camera"][0])
+        # cv2.imwrite("variedcam1.jpg", processed_timestep["observation"]["camera"]["image"]["varied_camera"][1])
+        # cv2.imwrite("variedcam2.jpg", processed_timestep["observation"]["camera"]["image"]["varied_camera"][2])
+        # cv2.imwrite("variedcam3.jpg", processed_timestep["observation"]["camera"]["image"]["varied_camera"][3])
+
+
 
         import robomimic.utils.torch_utils as TorchUtils
         cartesian_position = np.array(observation["robot_state"]["cartesian_position"])
-        eef_pos = cartesian_position[:,0:3].astype(np.float64)
-        eef_euler = cartesian_position[:,3:6].astype(np.float64)
+        eef_pos = cartesian_position[0:3].astype(np.float64)
+        eef_euler = cartesian_position[3:6].astype(np.float64)
         eef_euler = torch.from_numpy(eef_euler)
         eef_quat = TorchUtils.euler_angles_to_quat(eef_euler)
         eef_quat = eef_quat.numpy().astype(np.float64)
+
         
         obs = {
             "robot_state/cartesian_position": cartesian_position,
             "robot_state/eef_pos": eef_pos,
             "robot_state/eef_quat": eef_quat,
             "robot_state/gripper_position": np.array([observation["robot_state"]["gripper_position"]]),
-            "camera/image/hand_camera_image": im1,
-            "camera/image/varied_camera_left_image": im2,
-            "camera/image/varied_camera_right_image": im3,
+            "camera/image/hand_camera_left_image": im1,
+            "camera/image/varied_camera_2_left_image": im2,
+            "camera/image/varied_camera_1_left_image": im3,
+            "lang_emb": self.lang_emb 
         }
+
+        print(np.linalg.norm(self.lang_emb))
+
+
         
         self.fs_wrapper.add_obs(obs)
         obs_history = self.fs_wrapper.get_obs_history()
@@ -137,6 +170,10 @@ class PolicyWrapperRobomimic:
         # clip action
         action = np.clip(action, a_min=-1, a_max=1)
         # print("run policy:", int(1000 * (time.time() - t1)))
+        # print(action)
+        # for i in range(3):
+        #     action[i] *= 0.2
+        # action[-1] = 0
 
         return action
 

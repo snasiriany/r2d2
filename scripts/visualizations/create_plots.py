@@ -4,12 +4,13 @@ import matplotlib.pyplot as plt
 
 from r2d2.plotting.analysis_func import *
 from r2d2.plotting.misc import *
+import numpy as np
 from r2d2.plotting.text import *
 
 # Gather Graphical Data #
 data_path = None  # "/Volumes/R2D2_Drive/MyDrive/R2D2: Weekly Lab Data/IPRL"
 dir_path = os.path.dirname(os.path.realpath(__file__))
-data_directory = os.path.join(dir_path, "../../", "data") if data_path is None else data_path
+data_directory = os.path.join(dir_path, "../../", "data/success/") if data_path is None else data_path
 PLOT_FOLDERPATH = os.path.join(dir_path, "../../", "plots")
 if not os.path.exists(PLOT_FOLDERPATH):
     os.makedirs(PLOT_FOLDERPATH)
@@ -64,7 +65,8 @@ plt.clf()
 user_threshold = 500000
 user_names = list(user_progress_dict.keys())
 user_quantities = [user_progress_dict[key] for key in user_names]
-tick_names = ["{0}K".format(100 * i) if i < 10 else "1M" for i in range(6)]
+print(np.sum(user_quantities))
+tick_names = ["{0}K".format(100 * i) if i < 10 else "1M" for i in range(8)]
 tick_values = [1e5 * i for i in range(len(tick_names))]
 plt.xticks(tick_values, labels=tick_names)
 plt.barh(user_names, user_quantities)
@@ -87,7 +89,7 @@ plt.savefig(PLOT_FOLDERPATH + "/task_distribution.png", bbox_inches="tight")
 # Plot Trajectory Length Distribution #
 plt.clf()
 plt.hist(all_traj_lengths, bins=100)
-plt.xlim([0, 1000])
+plt.xlim([0, 2000])
 plt.title("Horizon Distribution", fontweight="bold")
 plt.savefig(PLOT_FOLDERPATH + "/horizon_distribution.png", bbox_inches="tight")
 

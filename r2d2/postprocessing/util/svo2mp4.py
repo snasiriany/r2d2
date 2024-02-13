@@ -72,7 +72,8 @@ def export_mp4(svo_file: Path, mp4_dir: Path, stereo_view: str = "left", show_pr
         grabbed = zed.grab(rt_parameters)
 
         # [NOTE SDK SEMANTICS] --> ZED SDK 4.0 introduces `sl.ERROR_CODE.END_OF_SVOFILE_REACHED`
-        if (grabbed == sl.ERROR_CODE.SUCCESS) or (use_sdk_4 and (grabbed == sl.ERROR_CODE.END_OF_SVOFILE_REACHED)):
+        # if (grabbed == sl.ERROR_CODE.SUCCESS) or (use_sdk_4 and (grabbed == sl.ERROR_CODE.END_OF_SVOFILE_REACHED)):
+        if (grabbed == sl.ERROR_CODE.SUCCESS) or ((grabbed == sl.ERROR_CODE.END_OF_SVOFILE_REACHED)):
             svo_position = zed.get_svo_position()
             zed.retrieve_image(img_container, {"left": sl.VIEW.LEFT, "right": sl.VIEW.RIGHT}[stereo_view])
 
@@ -85,7 +86,8 @@ def export_mp4(svo_file: Path, mp4_dir: Path, stereo_view: str = "left", show_pr
                 pbar.update()
 
             # [NOTE SDK SEMANTICS] --> Check if we've reached the end of the video
-            if (svo_position >= (n_frames - 1)) or (use_sdk_4 and (grabbed == sl.ERROR_CODE.END_OF_SVOFILE_REACHED)):
+            # if (svo_position >= (n_frames - 1)) or (use_sdk_4 and (grabbed == sl.ERROR_CODE.END_OF_SVOFILE_REACHED)):
+            if (svo_position >= (n_frames - 1)) or ((grabbed == sl.ERROR_CODE.END_OF_SVOFILE_REACHED)):
                 break
 
     # Cleanup & Return

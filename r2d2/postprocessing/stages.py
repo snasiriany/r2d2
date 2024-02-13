@@ -107,7 +107,7 @@ def run_processing(
     indexed_uuids: Dict[str, Dict[str, str]],
     processed_uuids: Dict[str, Dict[str, str]],
     errored_paths: Dict[str, Dict[str, str]],
-    process_batch_limit: int = 250,
+    process_batch_limit: int = 600, #250,
 ) -> None:
     """Iterate through each trajectory in `indexed_uuids` and 1) extract JSON metadata and 2) convert SVO -> MP4."""
     for outcome in indexed_uuids:
