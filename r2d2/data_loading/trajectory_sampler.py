@@ -56,7 +56,7 @@ def collect_data_folderpaths(filter_func=None, remove_failures=True):
     dir_path = os.path.dirname(os.path.realpath(__file__))
     data_dir = os.path.join(dir_path, "../../data")
     if remove_failures:
-        data_dir = os.path.join(data_dir, "success/30_demos")
+        data_dir = os.path.join(data_dir, "success/2024-03-16")
 
     # Collect #
     all_folderpaths = crawler(data_dir, filter_func=filter_func)

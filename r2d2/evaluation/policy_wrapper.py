@@ -76,7 +76,7 @@ class PolicyWrapperRobomimic:
         self.fs_wrapper.reset()
         self.policy.start_episode()
         self.lang_encoder = LangEncoder(device=torch.device("cpu"))
-        self.lang_emb = self.lang_encoder.get_lang_emb("pick the can from the counter and place it in the sink")
+        self.lang_emb = self.lang_encoder.get_lang_emb("pick the sponge from the counter and place it in the sink")
 
         # if eval_mode:
         #     self.policy.eval()
@@ -110,10 +110,10 @@ class PolicyWrapperRobomimic:
 
         t2 = time.time()
 
-        im1 = processed_timestep["observation"]["camera"]["image"]["hand_camera"][1] #observation["image"]["25047636_left"],
+        wrist_camera = processed_timestep["observation"]["camera"]["image"]["hand_camera"][0] #observation["image"]["25047636_left"],
         #switch these back
-        im2 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][2] #observation["image"]["25047636_left"],
-        im3 = processed_timestep["observation"]["camera"]["image"]["varied_camera"][0] #observation["image"]["25047636_left"],
+        varied_cam_1_left = processed_timestep["observation"]["camera"]["image"]["varied_camera"][2] #observation["image"]["25047636_left"],
+        varied_cam_2_left = processed_timestep["observation"]["camera"]["image"]["varied_camera"][0] #observation["image"]["25047636_left"],
         # print(type(im1))
         # print(im1)
 
@@ -142,9 +142,9 @@ class PolicyWrapperRobomimic:
             "robot_state/eef_pos": eef_pos,
             "robot_state/eef_quat": eef_quat,
             "robot_state/gripper_position": np.array([observation["robot_state"]["gripper_position"]]),
-            "camera/image/hand_camera_left_image": im1,
-            "camera/image/varied_camera_2_left_image": im2,
-            "camera/image/varied_camera_1_left_image": im3,
+            "camera/image/hand_camera_left_image": wrist_camera,
+            "camera/image/varied_camera_2_left_image": varied_cam_2_left,
+            "camera/image/varied_camera_1_left_image": varied_cam_1_left,
             "lang_emb": self.lang_emb 
         }
 

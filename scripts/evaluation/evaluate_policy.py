@@ -1,7 +1,7 @@
 from r2d2.evaluation.eval_launcher_robomimic import eval_launcher
 import os
 
-CKPT_BASE_PATHS = ["/home/soroush/code/02-09-cotrain-try3/seed_123_ds_real90-mgCounterToSink/20240209033137/models/model_epoch_1900.pth"] #[os.path.join("~/expdata/r2d2/im/bc_ret_pt", p) for p in [
+CKPT_BASE_PATHS = ["/home/soroush/code/03-18-None-real-only/seed_1_ds_real100-diverse-rgb-only/20240318034720/models/model_epoch_500.pth"] #[os.path.join("~/expdata/r2d2/im/bc_ret_pt", p) for p in [
     # ### old ckpts ###
     # "06-07-im84-2cams-try2/ds_prior_im84-all_tp_0_predretacs_False/2023-06-07-08-04-46/models/model_epoch_200.pth", # bc
     # "06-07-im84-2cams-try2/ds_prior_im84-all_rettype_z_tp_0_predretacs_False/2023-06-07-08-04-47/models/model_epoch_200.pth", # bam
