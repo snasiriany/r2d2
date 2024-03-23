@@ -44,7 +44,6 @@ class FrankaRobot:
 
     def update_command(self, command, action_space="cartesian_velocity", blocking=False):
         action_dict = self.create_action_dict(command, action_space=action_space)
-
         self.update_joints(action_dict["joint_position"], velocity=False, blocking=blocking)
         self.update_gripper(action_dict["gripper_position"], velocity=False, blocking=blocking)
 
@@ -104,6 +103,7 @@ class FrankaRobot:
             run_threaded_command(helper_non_blocking)
 
     def update_gripper(self, command, velocity=True, blocking=False):
+
         if velocity:
             gripper_delta = self._ik_solver.gripper_velocity_to_delta(command)
             command = gripper_delta + self.get_gripper_position()

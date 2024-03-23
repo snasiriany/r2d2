@@ -1,0 +1,2 @@
+- gripper=robotiq_2f
+- gripper.comport=/dev/ttyUSB0
