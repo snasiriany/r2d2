@@ -177,14 +177,18 @@ class FrankaRobot:
         clamped_time_to_go = min(t_max, max(time_to_go, t_min))
         return clamped_time_to_go
 
-    def create_action_dict(self, action, action_space, robot_state=None):
+    def create_action_dict(self, action, action_space, gripper_action_space=None, robot_state=None):
         assert action_space in ["cartesian_position", "joint_position", "cartesian_velocity", "joint_velocity"]
         if robot_state is None:
             robot_state = self.get_robot_state()[0]
         action_dict = {"robot_state": robot_state}
         velocity = "velocity" in action_space
 
-        if velocity:
+        if gripper_action_space is None:
+            gripper_action_space = "velocity" if velocity else "position"
+        assert gripper_action_space in ["velocity", "policy"]
+
+        if gripper_action_space == "velocity":
             action_dict["gripper_velocity"] = action[-1]
             gripper_delta = self._ik_solver.gripper_velocity_to_delta(action[-1])
             gripper_position = robot_state["gripper_position"] + gripper_delta

@@ -64,8 +64,8 @@ class SVOReader:
 
     def get_frame_resolution(self):
         camera_info = self._cam.get_camera_information().camera_configuration
-        width = camera_info.resolution.width
-        height = camera_info.resolution.height
+        width = camera_info.camera_resolution.width
+        height = camera_info.camera_resolution.height
         return (width, height)
 
     def get_frame_count(self):
