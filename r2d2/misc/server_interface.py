@@ -42,8 +42,8 @@ class ServerInterface:
     def kill_controller(self):
         self.server.kill_controller()
 
-    def update_command(self, command, action_space="cartesian_velocity", gripper_action_space="velocity", blocking=False):
-        action_dict = self.server.update_command(command.tolist(), action_space, blocking)
+    def update_command(self, command, action_space="cartesian_velocity", gripper_action_space=None, blocking=False):
+        action_dict = self.server.update_command(command.tolist(), action_space, gripper_action_space, blocking)
         return action_dict
 
     def create_action_dict(self, command, action_space="cartesian_velocity"):
